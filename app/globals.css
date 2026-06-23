@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/* Cadence design tokens (CLAUDE.md §11) — warm, calm, deliberately un-AI.
+   Tailwind v4 reads these to generate utilities (bg-bg, text-accent, etc.). */
+@theme {
+  --color-bg: #faf9f6;
+  --color-surface: #ffffff;
+  --color-text: #2e2e2b;
+  --color-muted: #6b6b64;
+  --color-accent: #7e8c6e;
+  --color-border: #eceae3;
+  --color-due-soon: #c99a4e;
+  --color-on-track: #7e8c6e;
+  --color-overdue: #b07a5e;
+
+  /* Body/UI = humanist sans; the companion's voice = warm serif (used sparingly). */
+  --font-sans: var(--font-hanken), system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-source-serif), Georgia, "Times New Roman", serif;
+}
+
+html {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The companion speaks in serif. */
+.voice {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
+}
+
+/* Quality floor (§11): respect reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

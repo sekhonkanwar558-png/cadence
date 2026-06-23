@@ -2,14 +2,16 @@ import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
 /**
- * Day 1 scopes: identity + create/read Calendar events.
- * Gmail and broader Calendar scopes are added in later days.
+ * Scopes: identity + full Calendar access. We need read+write on events
+ * (create_calendar_block) AND free/busy lookups (get_calendar_conflicts).
+ * `calendar.events` alone does NOT permit freebusy.query — the full `calendar`
+ * scope covers both. Gmail is added in a later day.
  */
 const GOOGLE_SCOPES = [
   "openid",
   "email",
   "profile",
-  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar",
 ].join(" ");
 
 export const authOptions: NextAuthOptions = {
