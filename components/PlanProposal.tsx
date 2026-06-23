@@ -2,6 +2,7 @@
 
 import type { PlanResult, ProposedBlock } from "@/lib/types";
 import { formatDayHeading, formatTimeRange, formatEffort } from "@/lib/format";
+import EmailDraftCard from "@/components/EmailDraftCard";
 
 interface Props {
   plan: PlanResult;
@@ -78,20 +79,13 @@ export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }:
         </section>
       )}
 
-      {/* Suggested email (drafted, not sent) */}
+      {/* Suggested email — review, edit, and send (or connect Gmail first) */}
       {plan.emailDraft && (
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-medium uppercase tracking-wide text-muted">
             A message I&apos;d send — your call
           </h3>
-          <div className="rounded-xl border border-border bg-surface px-4 py-3">
-            <p className="text-sm text-muted">
-              To: <span className="text-text">{plan.emailDraft.to}</span>
-            </p>
-            <p className="mt-1 font-medium">{plan.emailDraft.subject}</p>
-            <p className="mt-2 whitespace-pre-line text-sm text-text/90">{plan.emailDraft.body}</p>
-            <p className="mt-3 text-xs uppercase tracking-wide text-muted">Draft · not sent</p>
-          </div>
+          <EmailDraftCard draft={plan.emailDraft} />
         </section>
       )}
 

@@ -7,7 +7,10 @@ export interface SessionContext {
   expiresAt: number | null;
   email: string;
   name: string | null;
+  hasGmail: boolean;
 }
+
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 /**
  * Read the signed-in user's Google credentials + identity from the NextAuth
@@ -23,5 +26,6 @@ export async function getSessionContext(req: NextRequest): Promise<SessionContex
     expiresAt: token.expiresAt ?? null,
     email: token.email,
     name: typeof token.name === "string" ? token.name : null,
+    hasGmail: Boolean(token.grantedScopes?.includes(GMAIL_SCOPE)),
   };
 }

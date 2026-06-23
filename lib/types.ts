@@ -95,6 +95,15 @@ export interface DashboardBlock {
   event_link: string | null;
 }
 
+export interface DashboardDraft {
+  id: string;
+  to: string | null;
+  subject: string | null;
+  body: string | null;
+  status: DraftStatus;
+  gmail_id: string | null;
+}
+
 /** A task as the dashboard renders it — with progress + current urgency. */
 export interface DashboardTask {
   id: string;
@@ -107,6 +116,7 @@ export interface DashboardTask {
   is_demo: boolean;
   subtasks: DashboardSubtask[];
   blocks: DashboardBlock[];
+  drafts: DashboardDraft[];
 }
 
 /** Shared payload shape for the dashboard endpoints. */

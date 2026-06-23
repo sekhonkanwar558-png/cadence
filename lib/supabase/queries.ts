@@ -2,8 +2,10 @@ import { getSupabaseAdmin } from "./server";
 import { urgencyRank } from "@/lib/urgency";
 import type {
   DashboardBlock,
+  DashboardDraft,
   DashboardSubtask,
   DashboardTask,
+  DraftStatus,
   ProposedBlock,
   ProposedEmail,
   Subtask,
@@ -207,13 +209,17 @@ export async function listDashboardTasks(userId: string): Promise<DashboardTask[
   if (tasks.length === 0) return [];
   const ids = tasks.map((t) => t.id);
 
-  const [{ data: subData }, { data: blockData }] = await Promise.all([
+  const [{ data: subData }, { data: blockData }, { data: draftData }] = await Promise.all([
     db.from("subtasks").select("id, task_id, title, status, effort_minutes, order").in("task_id", ids),
     db
       .from("schedule_blocks")
       .select("id, task_id, title, start, end, status, event_link")
       .in("task_id", ids)
       .eq("status", "confirmed"),
+    db
+      .from("email_drafts")
+      .select("id, task_id, to, subject, body, status, gmail_id")
+      .in("task_id", ids),
   ]);
 
   const subsByTask = new Map<string, DashboardSubtask[]>();
@@ -230,6 +236,13 @@ export async function listDashboardTasks(userId: string): Promise<DashboardTask[
     blocksByTask.set(b.task_id, list);
   }
 
+  const draftsByTask = new Map<string, DashboardDraft[]>();
+  for (const d of (draftData ?? []) as Array<DashboardDraft & { task_id: string }>) {
+    const list = draftsByTask.get(d.task_id) ?? [];
+    list.push({ id: d.id, to: d.to, subject: d.subject, body: d.body, status: d.status, gmail_id: d.gmail_id });
+    draftsByTask.set(d.task_id, list);
+  }
+
   const result: DashboardTask[] = tasks.map((t) => ({
     id: t.id,
     title: t.title,
@@ -243,6 +256,7 @@ export async function listDashboardTasks(userId: string): Promise<DashboardTask[
     blocks: (blocksByTask.get(t.id) ?? []).sort(
       (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
     ),
+    drafts: draftsByTask.get(t.id) ?? [],
   }));
 
   // Most urgent first, then soonest deadline.
@@ -261,6 +275,7 @@ interface DemoTaskSeed {
   hoursOut: number;
   importance: number;
   subtasks: Array<{ title: string; effort: number; status: "todo" | "done" }>;
+  email?: { to: string; subject: string; body: string };
 }
 
 const DEMO_TASKS: DemoTaskSeed[] = [
@@ -274,6 +289,16 @@ const DEMO_TASKS: DemoTaskSeed[] = [
       { title: "Mock interview run-through", effort: 45, status: "todo" },
       { title: "Re-read the job description", effort: 15, status: "done" },
     ],
+    email: {
+      to: "alex.recruiter@northwind.example",
+      subject: "Confirming tomorrow's final-round interview",
+      body:
+        "Hi Alex,\n\n" +
+        "Just confirming I'll be ready for the final-round interview tomorrow — looking " +
+        "forward to it. If there's anything you'd like me to prepare or bring along, " +
+        "happy to sort it out beforehand.\n\n" +
+        "Thanks again for the opportunity.\n\nBest,\nKanwar",
+    },
   },
   {
     title: "DBMS assignment",
@@ -348,6 +373,17 @@ export async function seedDemo(userId: string): Promise<void> {
       })),
     );
     if (subErr) throw new Error(`seed subtasks failed: ${subErr.message}`);
+
+    if (t.email) {
+      const { error: emailErr } = await db.from("email_drafts").insert({
+        task_id: taskId,
+        to: t.email.to,
+        subject: t.email.subject,
+        body: t.email.body,
+        status: "draft",
+      });
+      if (emailErr) throw new Error(`seed email draft failed: ${emailErr.message}`);
+    }
   }
 }
 
@@ -411,4 +447,56 @@ export async function insertConfirmedBlock(args: {
     .single();
   if (error || !data) throw new Error(`insert confirmed block failed: ${error?.message ?? "no row"}`);
   return (data as { id: string }).id;
+}
+
+export interface EmailDraftForSend {
+  id: string;
+  to: string | null;
+  subject: string | null;
+  body: string | null;
+  status: DraftStatus;
+}
+
+/** Load an email draft for sending, verifying its task belongs to the user. */
+export async function getEmailDraftForSend(
+  draftId: string,
+  userId: string,
+): Promise<EmailDraftForSend | null> {
+  const db = getSupabaseAdmin();
+
+  const { data: draft, error } = await db
+    .from("email_drafts")
+    .select("id, to, subject, body, status, task_id")
+    .eq("id", draftId)
+    .single();
+  if (error || !draft) return null;
+  const row = draft as EmailDraftForSend & { task_id: string | null };
+  if (!row.task_id) return null;
+
+  const { data: task } = await db
+    .from("tasks")
+    .select("user_id")
+    .eq("id", row.task_id)
+    .single();
+  if (!task || (task as { user_id: string }).user_id !== userId) return null;
+
+  return { id: row.id, to: row.to, subject: row.subject, body: row.body, status: row.status };
+}
+
+export async function markDraftSent(
+  draftId: string,
+  args: { to: string; subject: string; body: string; gmailId: string },
+): Promise<void> {
+  const db = getSupabaseAdmin();
+  const { error } = await db
+    .from("email_drafts")
+    .update({
+      to: args.to,
+      subject: args.subject,
+      body: args.body,
+      status: "sent",
+      gmail_id: args.gmailId,
+    })
+    .eq("id", draftId);
+  if (error) throw new Error(`mark draft sent failed: ${error.message}`);
 }

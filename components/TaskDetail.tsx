@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import type { DashboardTask } from "@/lib/types";
 import { URGENCY_STYLE } from "@/lib/urgency";
 import { formatRelativeDeadline, formatDayHeading, formatTimeRange } from "@/lib/format";
+import EmailDraftCard from "@/components/EmailDraftCard";
 
 interface Props {
   task: DashboardTask;
@@ -105,6 +106,18 @@ export default function TaskDetail({
                 </li>
               ))}
             </ul>
+          </section>
+        )}
+
+        {/* Email drafts */}
+        {task.drafts.length > 0 && (
+          <section className="mt-6">
+            <h3 className="text-sm font-medium uppercase tracking-wide text-muted">Messages</h3>
+            <div className="mt-3 flex flex-col gap-3">
+              {task.drafts.map((d) => (
+                <EmailDraftCard key={d.id} draft={d} />
+              ))}
+            </div>
           </section>
         )}
 

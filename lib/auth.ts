@@ -2,17 +2,21 @@ import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
 /**
- * Scopes: identity + full Calendar access. We need read+write on events
- * (create_calendar_block) AND free/busy lookups (get_calendar_conflicts).
- * `calendar.events` alone does NOT permit freebusy.query — the full `calendar`
- * scope covers both. Gmail is added in a later day.
+ * Scopes: identity + full Calendar access + Gmail send.
+ * - `calendar` covers create_calendar_block AND freebusy.query.
+ * - `gmail.send` is the minimal scope to send mail (no inbox/draft read).
+ * gmail.send is added lazily: existing calendar-only sessions keep working and
+ * only re-consent when the user actually sends an email.
  */
 const GOOGLE_SCOPES = [
   "openid",
   "email",
   "profile",
   "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/gmail.send",
 ].join(" ");
+
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -37,8 +41,16 @@ export const authOptions: NextAuthOptions = {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.expiresAt = account.expires_at;
+        // The space-delimited set of scopes the user actually granted.
+        token.grantedScopes = account.scope;
       }
       return token;
+    },
+    async session({ session, token }) {
+      // Surface to the client whether Gmail send was granted (drives the
+      // "Connect Gmail to send" lazy re-consent). Never expose tokens here.
+      session.hasGmail = Boolean(token.grantedScopes?.includes(GMAIL_SCOPE));
+      return session;
     },
   },
 };
