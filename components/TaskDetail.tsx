@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { DashboardTask } from "@/lib/types";
 import { URGENCY_STYLE } from "@/lib/urgency";
 import { formatRelativeDeadline, formatDayHeading, formatTimeRange } from "@/lib/format";
@@ -12,6 +12,7 @@ interface Props {
   onReschedule: () => void;
   rescheduling: boolean;
   rescheduleError: string | null;
+  onToggleSubtask: (subtaskId: string, done: boolean) => Promise<void>;
 }
 
 export default function TaskDetail({
@@ -20,7 +21,11 @@ export default function TaskDetail({
   onReschedule,
   rescheduling,
   rescheduleError,
+  onToggleSubtask,
 }: Props) {
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -28,6 +33,18 @@ export default function TaskDetail({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  async function toggle(subtaskId: string, done: boolean) {
+    setToggleError(null);
+    setPendingId(subtaskId);
+    try {
+      await onToggleSubtask(subtaskId, done);
+    } catch (e) {
+      setToggleError(e instanceof Error ? e.message : "Couldn't update that step.");
+    } finally {
+      setPendingId(null);
+    }
+  }
 
   const badge = URGENCY_STYLE[task.urgency];
   const incompleteCount = task.subtasks.filter((s) => s.status !== "done").length;
@@ -60,23 +77,36 @@ export default function TaskDetail({
         {task.subtasks.length > 0 && (
           <section className="mt-6">
             <h3 className="text-sm font-medium uppercase tracking-wide text-muted">The work</h3>
-            <ul className="mt-3 flex flex-col gap-2">
+            <ul className="mt-3 flex flex-col gap-1">
               {task.subtasks.map((s) => {
                 const done = s.status === "done";
+                const pending = pendingId === s.id;
                 return (
-                  <li key={s.id} className="flex items-center gap-3">
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        done ? "bg-border" : "bg-accent"
-                      }`}
-                    />
-                    <span className={done ? "text-muted line-through" : "text-text"}>
-                      {s.title}
-                    </span>
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => toggle(s.id, !done)}
+                      aria-pressed={done}
+                      aria-label={done ? `Mark "${s.title}" not done` : `Mark "${s.title}" done`}
+                      className="flex w-full items-center gap-3 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-bg disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                    >
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                          done ? "border-accent bg-accent text-white" : "border-border"
+                        }`}
+                      >
+                        {done && <CheckIcon />}
+                      </span>
+                      <span className={done ? "text-muted line-through" : "text-text"}>
+                        {s.title}
+                      </span>
+                    </button>
                   </li>
                 );
               })}
             </ul>
+            {toggleError && <p className="mt-2 text-sm text-overdue">{toggleError}</p>}
           </section>
         )}
 
@@ -126,7 +156,7 @@ export default function TaskDetail({
         )}
 
         {/* Actions */}
-        <div className="mt-6 flex items-center gap-4">
+        <div className="mt-8 flex items-center gap-4">
           {incompleteCount > 0 && (
             <button
               onClick={onReschedule}
@@ -142,5 +172,23 @@ export default function TaskDetail({
         </div>
       </div>
     </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
   );
 }

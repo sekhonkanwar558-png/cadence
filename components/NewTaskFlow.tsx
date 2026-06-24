@@ -9,7 +9,13 @@ import type { ConfirmedBlock, PlanResult } from "@/lib/types";
 type Phase = "idle" | "thinking" | "proposed" | "confirming" | "confirmed";
 
 /** The Day-2 composer → proposal → confirm flow, now reached via "+ New task". */
-export default function NewTaskFlow({ onClose }: { onClose: () => void }) {
+export default function NewTaskFlow({
+  onClose,
+  initialValue,
+}: {
+  onClose: () => void;
+  initialValue?: string;
+}) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [plan, setPlan] = useState<PlanResult | null>(null);
   const [confirmed, setConfirmed] = useState<ConfirmedBlock[] | null>(null);
@@ -70,7 +76,11 @@ export default function NewTaskFlow({ onClose }: { onClose: () => void }) {
       )}
 
       {(phase === "idle" || phase === "thinking") && (
-        <TaskComposer onSubmit={submitTask} loading={phase === "thinking"} />
+        <TaskComposer
+          onSubmit={submitTask}
+          loading={phase === "thinking"}
+          initialValue={initialValue}
+        />
       )}
 
       {(phase === "proposed" || phase === "confirming") && plan && (

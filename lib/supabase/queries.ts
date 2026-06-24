@@ -192,17 +192,25 @@ interface TaskRowFull {
   urgency: Urgency;
   importance: number;
   is_demo: boolean;
+  completed_at: string | null;
 }
 
-/** All of a user's live tasks with subtasks + confirmed blocks, sorted most-urgent first. */
-export async function listDashboardTasks(userId: string): Promise<DashboardTask[]> {
+/**
+ * A user's tasks with subtasks + confirmed blocks. Defaults to the live board
+ * (status='active'), sorted most-urgent first; pass status='completed' for the
+ * history view, sorted by completion time (newest first).
+ */
+export async function listDashboardTasks(
+  userId: string,
+  status: TaskStatus = "active",
+): Promise<DashboardTask[]> {
   const db = getSupabaseAdmin();
 
   const { data: taskData, error } = await db
     .from("tasks")
-    .select("id, title, type, deadline, status, urgency, importance, is_demo")
+    .select("id, title, type, deadline, status, urgency, importance, is_demo, completed_at")
     .eq("user_id", userId)
-    .neq("status", "cancelled");
+    .eq("status", status);
   if (error) throw new Error(`listDashboardTasks failed: ${error.message}`);
 
   const tasks = (taskData ?? []) as TaskRowFull[];
@@ -252,6 +260,7 @@ export async function listDashboardTasks(userId: string): Promise<DashboardTask[
     urgency: t.urgency,
     importance: t.importance,
     is_demo: t.is_demo,
+    completed_at: t.completed_at,
     subtasks: (subsByTask.get(t.id) ?? []).sort((a, b) => a.order - b.order),
     blocks: (blocksByTask.get(t.id) ?? []).sort(
       (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
@@ -259,7 +268,16 @@ export async function listDashboardTasks(userId: string): Promise<DashboardTask[
     drafts: draftsByTask.get(t.id) ?? [],
   }));
 
-  // Most urgent first, then soonest deadline.
+  // History: most recently completed first.
+  if (status === "completed") {
+    return result.sort(
+      (a, b) =>
+        (b.completed_at ? new Date(b.completed_at).getTime() : 0) -
+        (a.completed_at ? new Date(a.completed_at).getTime() : 0),
+    );
+  }
+
+  // Live board: most urgent first, then soonest deadline.
   return result.sort((a, b) => {
     const byUrgency = urgencyRank(b.urgency) - urgencyRank(a.urgency);
     if (byUrgency !== 0) return byUrgency;
@@ -267,6 +285,60 @@ export async function listDashboardTasks(userId: string): Promise<DashboardTask[
     const bd = b.deadline ? new Date(b.deadline).getTime() : Infinity;
     return ad - bd;
   });
+}
+
+/**
+ * Move a task to history: mark it completed and stamp completed_at. Scoped to the
+ * owner (admin client bypasses RLS) — a non-matching id/user throws "Task not found".
+ */
+export async function completeTask(taskId: string, userId: string): Promise<void> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("tasks")
+    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .eq("id", taskId)
+    .eq("user_id", userId)
+    .select("id")
+    .single();
+  if (error || !data) throw new Error("Task not found.");
+}
+
+/**
+ * Toggle a subtask done/undone, scoped to its owner. The admin client bypasses
+ * RLS, so ownership is enforced here via the parent task's user_id. Stamps
+ * completed_at on completion and clears it on undo — this is what lets real
+ * history (and the companion's personalization) accumulate honestly over time.
+ */
+export async function setSubtaskDone(
+  subtaskId: string,
+  userId: string,
+  done: boolean,
+): Promise<void> {
+  const db = getSupabaseAdmin();
+
+  const { data: sub, error: subErr } = await db
+    .from("subtasks")
+    .select("id, task_id")
+    .eq("id", subtaskId)
+    .single();
+  if (subErr || !sub) throw new Error("Subtask not found.");
+
+  const { data: task, error: taskErr } = await db
+    .from("tasks")
+    .select("id")
+    .eq("id", (sub as { task_id: string }).task_id)
+    .eq("user_id", userId)
+    .single();
+  if (taskErr || !task) throw new Error("Subtask not found.");
+
+  const { error: updErr } = await db
+    .from("subtasks")
+    .update({
+      status: done ? "done" : "todo",
+      completed_at: done ? new Date().toISOString() : null,
+    })
+    .eq("id", subtaskId);
+  if (updErr) throw new Error(`update subtask failed: ${updErr.message}`);
 }
 
 interface DemoTaskSeed {
@@ -499,4 +571,35 @@ export async function markDraftSent(
     })
     .eq("id", draftId);
   if (error) throw new Error(`mark draft sent failed: ${error.message}`);
+}
+
+export interface UserHistory {
+  tasks: Array<{ type: string | null; created_at: string }>;
+  incompleteSubtaskTitles: string[];
+}
+
+/** Recent task history (last 30 days) used to build the personalization context (§4). */
+export async function getUserHistory(userId: string): Promise<UserHistory> {
+  const db = getSupabaseAdmin();
+  const since = new Date(Date.now() - 30 * 24 * 3600000).toISOString();
+
+  const { data: taskData } = await db
+    .from("tasks")
+    .select("id, type, created_at")
+    .eq("user_id", userId)
+    .gte("created_at", since);
+
+  const tasks = (taskData ?? []) as Array<{ id: string; type: string | null; created_at: string }>;
+  if (tasks.length === 0) return { tasks: [], incompleteSubtaskTitles: [] };
+
+  const { data: subData } = await db
+    .from("subtasks")
+    .select("title, status, task_id")
+    .in("task_id", tasks.map((t) => t.id))
+    .neq("status", "done");
+
+  return {
+    tasks: tasks.map((t) => ({ type: t.type, created_at: t.created_at })),
+    incompleteSubtaskTitles: ((subData ?? []) as Array<{ title: string }>).map((s) => s.title),
+  };
 }

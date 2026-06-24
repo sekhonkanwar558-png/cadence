@@ -1,6 +1,6 @@
 // Shared domain types for Cadence (typed end to end, per §12 — no `any`).
 
-export type TaskStatus = "proposed" | "active" | "done" | "cancelled";
+export type TaskStatus = "proposed" | "active" | "completed" | "done" | "cancelled";
 export type BlockStatus = "proposed" | "confirmed" | "done" | "cancelled";
 export type DraftStatus = "draft" | "confirmed" | "sent";
 
@@ -51,6 +51,8 @@ export interface TaskInput {
 export interface PlanResult {
   taskId: string;
   companionSummary: string;
+  /** One personalized insight in the companion's voice (§2) — shown above the plan. */
+  recommendation?: string;
   task: {
     id: string;
     title: string;
@@ -114,6 +116,7 @@ export interface DashboardTask {
   urgency: Urgency;
   importance: number;
   is_demo: boolean;
+  completed_at: string | null;
   subtasks: DashboardSubtask[];
   blocks: DashboardBlock[];
   drafts: DashboardDraft[];

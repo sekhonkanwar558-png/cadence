@@ -15,6 +15,8 @@ const MAX_ROUNDS = 8;
 export interface ProposeArgs {
   task: TaskInput;
   credentials: GoogleCredentials;
+  /** Lightweight history summary fed to the recommendation prompt (§4). */
+  contextSummary?: string;
 }
 
 export interface ProposeOutput {
@@ -22,6 +24,7 @@ export interface ProposeOutput {
   blocks: ProposedBlock[];
   email: ProposedEmail | null;
   companionSummary: string;
+  recommendation: string;
 }
 
 function systemPrompt(task: TaskInput, now: string): string {
@@ -58,13 +61,18 @@ function systemPrompt(task: TaskInput, now: string): string {
  * tools (create_calendar_block, draft_email) are STAGED — collected here and only
  * carried out after the user confirms (§7/§8).
  */
-export async function proposePlan({ task, credentials }: ProposeArgs): Promise<ProposeOutput> {
+export async function proposePlan({
+  task,
+  credentials,
+  contextSummary,
+}: ProposeArgs): Promise<ProposeOutput> {
   const now = new Date().toISOString();
 
   const subtasks: Subtask[] = [];
   const blocks: ProposedBlock[] = [];
   let email: ProposedEmail | null = null;
   let companionSummary = "";
+  let recommendation = "";
 
   const contents: Content[] = [
     { role: "user", parts: [{ text: systemPrompt(task, now) }] },
@@ -81,9 +89,11 @@ export async function proposePlan({ task, credentials }: ProposeArgs): Promise<P
           context: args.context ? String(args.context) : task.context,
           now,
           timezone: task.timezone,
+          contextSummary,
         });
-        subtasks.splice(0, subtasks.length, ...result);
-        return { subtasks: result };
+        subtasks.splice(0, subtasks.length, ...result.subtasks);
+        recommendation = result.recommendation;
+        return { subtasks: result.subtasks };
       }
       case "get_calendar_conflicts": {
         const busy = await getCalendarConflicts(
@@ -156,5 +166,5 @@ export async function proposePlan({ task, credentials }: ProposeArgs): Promise<P
         : "I've broken this down for you — take a look.";
   }
 
-  return { subtasks, blocks, email, companionSummary };
+  return { subtasks, blocks, email, companionSummary, recommendation };
 }

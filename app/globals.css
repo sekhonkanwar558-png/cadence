@@ -34,6 +34,22 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* A gentle entrance for the companion's recommendation (§5) — not a pop. */
+@keyframes cadence-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: cadence-fade-in 300ms ease-out both;
+}
+
 /* Quality floor (§11): respect reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

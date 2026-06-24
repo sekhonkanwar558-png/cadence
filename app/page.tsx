@@ -6,11 +6,38 @@ import CompanionBanner from "@/components/CompanionBanner";
 import TaskCard from "@/components/TaskCard";
 import TaskDetail from "@/components/TaskDetail";
 import NewTaskFlow from "@/components/NewTaskFlow";
+import CalendarPanel from "@/components/CalendarPanel";
+import HistoryView from "@/components/HistoryView";
 import type { DashboardTask } from "@/lib/types";
 
-type Mode = "dashboard" | "new-task";
+type Mode = "dashboard" | "new-task" | "history";
 
 const CALM = "You're on track. Nothing needs you right now.";
+
+// Shown to first-time users instead of fake demo data — tapping one prefills the
+// composer (it does not submit), inviting the user to act rather than browse.
+// The first three are one per persona (student / professional / founder) so every
+// user type sees something relevant immediately; the rest sit behind "Show more".
+const EXAMPLE_TASKS = [
+  "Final exam on Friday",
+  "Send project update to manager by EOD",
+  "Prepare pitch deck for investor meeting Thursday",
+  // Student
+  "Submit assignment by tomorrow 5pm",
+  "Prepare for job interview this week",
+  "Complete lab report by Thursday",
+  "Study for mid-terms starting Monday",
+  // Professional
+  "Prepare presentation for client meeting Friday",
+  "Review and submit expense report this week",
+  "Follow up with team on pending deliverables",
+  "Complete performance review by next Wednesday",
+  // Entrepreneur / Founder
+  "Pay electricity bill this week",
+  "Send invoice to client before end of month",
+  "Follow up with 3 leads by Friday",
+  "File GST return before deadline",
+];
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -18,11 +45,17 @@ export default function Home() {
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [companion, setCompanion] = useState(CALM);
   const [loading, setLoading] = useState(true);
-  const [seeding, setSeeding] = useState(false);
+  const [composerSeed, setComposerSeed] = useState("");
+  const [showAllExamples, setShowAllExamples] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
+  const [completionPromptId, setCompletionPromptId] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [historyTasks, setHistoryTasks] = useState<DashboardTask[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const applyPayload = (data: { tasks: DashboardTask[]; companionMessage: string }) => {
@@ -47,19 +80,9 @@ export default function Home() {
     if (status === "authenticated") fetchTasks();
   }, [status, fetchTasks]);
 
-  async function loadDemo() {
-    setSeeding(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/demo/seed", { method: "POST" });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error ?? "Couldn't load the demo.");
-      applyPayload(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't load the demo.");
-    } finally {
-      setSeeding(false);
-    }
+  function startWith(seed: string) {
+    setComposerSeed(seed);
+    setMode("new-task");
   }
 
   async function checkDeadlines() {
@@ -74,6 +97,58 @@ export default function Home() {
       setError(e instanceof Error ? e.message : "Couldn't check your deadlines.");
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function toggleSubtask(subtaskId: string, done: boolean) {
+    const res = await fetch(`/api/subtasks/${subtaskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ done }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error ?? "Couldn't update that step.");
+    applyPayload(data);
+
+    // Notice when this just finished a task — close the detail and let the card
+    // ask whether to move it to history.
+    const parent = (data.tasks as DashboardTask[]).find((t) =>
+      t.subtasks.some((s) => s.id === subtaskId),
+    );
+    if (parent && parent.subtasks.length > 0 && parent.subtasks.every((s) => s.status === "done")) {
+      setSelectedId(null);
+      setCompletionPromptId(parent.id);
+    } else if (parent) {
+      setCompletionPromptId((cur) => (cur === parent.id ? null : cur));
+    }
+  }
+
+  async function completeTask() {
+    if (!completionPromptId) return;
+    setCompleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tasks/${completionPromptId}/complete`, { method: "POST" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error ?? "Couldn't complete that task.");
+      setCompletionPromptId(null);
+      await fetchTasks();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't complete that task.");
+    } finally {
+      setCompleting(false);
+    }
+  }
+
+  async function openHistory() {
+    setMode("history");
+    setHistoryLoading(true);
+    try {
+      const res = await fetch("/api/tasks?status=completed");
+      const data = await res.json();
+      if (data.ok) setHistoryTasks(data.tasks);
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
@@ -102,12 +177,27 @@ export default function Home() {
       <header className="mb-12 flex items-center justify-between">
         <span className="voice text-lg">Cadence</span>
         {status === "authenticated" && (
-          <span className="text-sm text-muted">
-            {session.user?.email}{" "}
-            <button onClick={() => signOut()} className="text-accent hover:underline">
-              Sign out
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => (mode === "history" ? setMode("dashboard") : openHistory())}
+              className="text-sm text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+            >
+              {mode === "history" ? "Dashboard" : "History"}
             </button>
-          </span>
+            <button
+              onClick={() => setCalendarOpen(true)}
+              aria-label="Open calendar"
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:border-accent/40 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+            >
+              <CalendarIcon />
+            </button>
+            <span className="text-sm text-muted">
+              {session.user?.email}{" "}
+              <button onClick={() => signOut()} className="text-accent hover:underline">
+                Sign out
+              </button>
+            </span>
+          </div>
         )}
       </header>
 
@@ -133,10 +223,20 @@ export default function Home() {
 
       {status === "authenticated" && mode === "new-task" && (
         <NewTaskFlow
+          initialValue={composerSeed}
           onClose={() => {
+            setComposerSeed("");
             setMode("dashboard");
             fetchTasks();
           }}
+        />
+      )}
+
+      {status === "authenticated" && mode === "history" && (
+        <HistoryView
+          tasks={historyTasks}
+          loading={historyLoading}
+          onBack={() => setMode("dashboard")}
         />
       )}
 
@@ -153,14 +253,7 @@ export default function Home() {
               {checking ? "Checking…" : "Check my deadlines"}
             </button>
             <button
-              onClick={loadDemo}
-              disabled={seeding}
-              className="rounded-xl border border-border bg-surface px-4 py-2 transition-colors hover:border-accent/40 disabled:opacity-40"
-            >
-              {seeding ? "Loading…" : "Load demo"}
-            </button>
-            <button
-              onClick={() => setMode("new-task")}
+              onClick={() => startWith("")}
               className="rounded-xl border border-border bg-surface px-4 py-2 transition-colors hover:border-accent/40"
             >
               + New task
@@ -176,14 +269,45 @@ export default function Home() {
           {loading ? (
             <p className="text-muted">Loading your tasks…</p>
           ) : tasks.length === 0 ? (
-            <p className="text-muted">
-              Nothing here yet. Add a task, or load the demo to watch Cadence prioritize.
-            </p>
+            <div className="flex flex-col gap-5 py-2">
+              <div>
+                <p className="voice text-2xl leading-snug">A clear slate.</p>
+                <p className="mt-2 max-w-md text-muted">
+                  Tell me what you&apos;re working on and I&apos;ll break it down, find time for it,
+                  and keep watch. Start with one of these:
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(showAllExamples ? EXAMPLE_TASKS : EXAMPLE_TASKS.slice(0, 3)).map((ex) => (
+                  <button
+                    key={ex}
+                    onClick={() => startWith(ex)}
+                    className="rounded-full border border-border bg-surface px-4 py-2 text-sm text-text transition-colors hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                  >
+                    {ex}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllExamples((v) => !v)}
+                className="w-fit text-sm text-accent transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+              >
+                {showAllExamples ? "Show fewer" : "Show more"}
+              </button>
+            </div>
           ) : (
             <ul className="flex flex-col gap-3">
               {tasks.map((task) => (
                 <li key={task.id}>
-                  <TaskCard task={task} onOpen={(t) => setSelectedId(t.id)} />
+                  <TaskCard
+                    task={task}
+                    onOpen={(t) => setSelectedId(t.id)}
+                    completionPrompt={completionPromptId === task.id}
+                    completing={completing}
+                    onComplete={completeTask}
+                    onDismissComplete={() => setCompletionPromptId(null)}
+                  />
                 </li>
               ))}
             </ul>
@@ -201,8 +325,34 @@ export default function Home() {
           onReschedule={reschedule}
           rescheduling={rescheduling}
           rescheduleError={rescheduleError}
+          onToggleSubtask={toggleSubtask}
         />
       )}
+
+      {calendarOpen && session?.user?.email && (
+        <CalendarPanel email={session.user.email} onClose={() => setCalendarOpen(false)} />
+      )}
     </main>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4.5" width="18" height="16" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="8" y1="2.5" x2="8" y2="6" />
+      <line x1="16" y1="2.5" x2="16" y2="6" />
+    </svg>
   );
 }

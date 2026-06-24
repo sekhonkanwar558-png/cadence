@@ -12,8 +12,14 @@ export async function GET(req: NextRequest) {
   }
   try {
     const userId = await upsertUser(session.email, session.name);
-    const tasks = await listDashboardTasks(userId);
-    return NextResponse.json({ ok: true, tasks, companionMessage: companionMessage(tasks) });
+    const status =
+      new URL(req.url).searchParams.get("status") === "completed" ? "completed" : "active";
+    const tasks = await listDashboardTasks(userId, status);
+    return NextResponse.json({
+      ok: true,
+      tasks,
+      companionMessage: status === "active" ? companionMessage(tasks) : "",
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Couldn't load your tasks.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

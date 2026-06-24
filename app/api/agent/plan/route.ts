@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionContext } from "@/lib/auth-session";
 import { proposePlan } from "@/lib/agent/plan";
+import { buildUserContext } from "@/lib/agent/context";
 import { upsertUser, insertProposedPlan } from "@/lib/supabase/queries";
 import type { PlanResult, TaskInput } from "@/lib/types";
 
@@ -33,8 +34,12 @@ export async function POST(req: NextRequest) {
   };
 
   try {
+    const userId = await upsertUser(session.email, session.name);
+    const contextSummary = await buildUserContext(userId, task.timezone);
+
     const proposal = await proposePlan({
       task,
+      contextSummary,
       credentials: {
         accessToken: session.accessToken,
         refreshToken: session.refreshToken,
@@ -42,7 +47,6 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const userId = await upsertUser(session.email, session.name);
     const inserted = await insertProposedPlan({
       userId,
       task,
@@ -54,6 +58,7 @@ export async function POST(req: NextRequest) {
     const result: PlanResult = {
       taskId: inserted.taskId,
       companionSummary: proposal.companionSummary,
+      recommendation: proposal.recommendation || undefined,
       task: {
         id: inserted.taskRow.id,
         title: inserted.taskRow.title,

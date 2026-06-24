@@ -33,6 +33,11 @@ export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }:
       {/* The companion's voice */}
       <p className="font-serif text-2xl leading-snug tracking-tight">{plan.companionSummary}</p>
 
+      {/* One personalized insight — just the companion speaking (§2/§5) */}
+      {plan.recommendation && (
+        <p className="voice fade-in text-xl leading-snug text-text">{plan.recommendation}</p>
+      )}
+
       {/* Subtasks */}
       {plan.subtasks.length > 0 && (
         <section className="flex flex-col gap-3">
