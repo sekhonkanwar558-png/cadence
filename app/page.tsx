@@ -49,6 +49,8 @@ export default function Home() {
   const [showAllExamples, setShowAllExamples] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
@@ -76,9 +78,22 @@ export default function Home() {
     }
   }, []);
 
+  const fetchSyncStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/calendar/sync");
+      const data = await res.json();
+      if (data.ok) setLastSynced(data.lastSynced);
+    } catch {
+      // Non-critical — the label just stays hidden.
+    }
+  }, []);
+
   useEffect(() => {
-    if (status === "authenticated") fetchTasks();
-  }, [status, fetchTasks]);
+    if (status === "authenticated") {
+      fetchTasks();
+      fetchSyncStatus();
+    }
+  }, [status, fetchTasks, fetchSyncStatus]);
 
   function startWith(seed: string) {
     setComposerSeed(seed);
@@ -97,6 +112,26 @@ export default function Home() {
       setError(e instanceof Error ? e.message : "Couldn't check your deadlines.");
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function syncCalendar() {
+    setSyncing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/calendar/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error ?? "Couldn't sync your calendar.");
+      applyPayload(data);
+      setLastSynced(data.lastSynced);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't sync your calendar.");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -244,20 +279,32 @@ export default function Home() {
         <section className="flex flex-col gap-8">
           <CompanionBanner message={companion} />
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={checkDeadlines}
-              disabled={checking}
-              className="rounded-xl bg-accent px-4 py-2 font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {checking ? "Checking…" : "Check my deadlines"}
-            </button>
-            <button
-              onClick={() => startWith("")}
-              className="rounded-xl border border-border bg-surface px-4 py-2 transition-colors hover:border-accent/40"
-            >
-              + New task
-            </button>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={checkDeadlines}
+                disabled={checking}
+                className="rounded-xl bg-accent px-4 py-2 font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {checking ? "Checking…" : "Check my deadlines"}
+              </button>
+              <button
+                onClick={syncCalendar}
+                disabled={syncing}
+                className="rounded-xl border border-border bg-surface px-4 py-2 transition-colors hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {syncing ? "Syncing…" : "Sync calendar"}
+              </button>
+              <button
+                onClick={() => startWith("")}
+                className="rounded-xl border border-border bg-surface px-4 py-2 transition-colors hover:border-accent/40"
+              >
+                + New task
+              </button>
+            </div>
+            {lastSynced && (
+              <p className="text-xs text-muted">Calendar synced {relativeTime(lastSynced)}.</p>
+            )}
           </div>
 
           {error && (
@@ -334,6 +381,18 @@ export default function Home() {
       )}
     </main>
   );
+}
+
+/** Compact, friendly "time ago" for the last-synced label. */
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function CalendarIcon() {

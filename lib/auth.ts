@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import { saveRefreshToken } from "@/lib/supabase/queries";
 
 /**
  * Scopes: identity + full Calendar access + Gmail send.
@@ -43,6 +44,15 @@ export const authOptions: NextAuthOptions = {
         token.expiresAt = account.expires_at;
         // The space-delimited set of scopes the user actually granted.
         token.grantedScopes = account.scope;
+        // Persist the refresh token for offline server-side Google calls (cron /
+        // Edge Function). Best-effort: a DB hiccup must never block sign-in.
+        if (account.refresh_token && token.email) {
+          try {
+            await saveRefreshToken(token.email, account.refresh_token);
+          } catch (e) {
+            console.error("Failed to persist Google refresh token", e);
+          }
+        }
       }
       return token;
     },

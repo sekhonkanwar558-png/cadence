@@ -25,6 +25,16 @@ export async function upsertUser(email: string, name?: string | null): Promise<s
   return (data as { id: string }).id;
 }
 
+/** Store the user's Google refresh token for offline server-side Google calls. */
+export async function saveRefreshToken(email: string, refreshToken: string): Promise<void> {
+  const db = getSupabaseAdmin();
+  const { error } = await db
+    .from("users")
+    .update({ google_refresh_token: refreshToken })
+    .eq("email", email);
+  if (error) throw new Error(`saveRefreshToken failed: ${error.message}`);
+}
+
 export interface TaskRow {
   id: string;
   title: string;
@@ -181,6 +191,35 @@ export async function markTaskActive(taskId: string): Promise<void> {
   if (error) throw new Error(`activate task failed: ${error.message}`);
 }
 
+/** Confirmed blocks for a task that have a real Calendar event — for cleanup on completion. */
+export async function getConfirmedBlocks(
+  taskId: string,
+): Promise<Array<{ id: string; gcalEventId: string; start: string }>> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("schedule_blocks")
+    .select("id, gcal_event_id, start")
+    .eq("task_id", taskId)
+    .eq("status", "confirmed")
+    .not("gcal_event_id", "is", null);
+  if (error) throw new Error(`load confirmed blocks failed: ${error.message}`);
+  return ((data ?? []) as Array<{ id: string; gcal_event_id: string; start: string }>).map((b) => ({
+    id: b.id,
+    gcalEventId: b.gcal_event_id,
+    start: b.start,
+  }));
+}
+
+/** Mark a block cancelled — used after its Calendar event is deleted on completion. */
+export async function markBlockCancelled(blockId: string): Promise<void> {
+  const db = getSupabaseAdmin();
+  const { error } = await db
+    .from("schedule_blocks")
+    .update({ status: "cancelled" })
+    .eq("id", blockId);
+  if (error) throw new Error(`cancel block failed: ${error.message}`);
+}
+
 // ---- Day 3: dashboard, demo seed, reschedule ----
 
 interface TaskRowFull {
@@ -193,6 +232,8 @@ interface TaskRowFull {
   importance: number;
   is_demo: boolean;
   completed_at: string | null;
+  source: string;
+  event_type: string;
 }
 
 /**
@@ -208,7 +249,9 @@ export async function listDashboardTasks(
 
   const { data: taskData, error } = await db
     .from("tasks")
-    .select("id, title, type, deadline, status, urgency, importance, is_demo, completed_at")
+    .select(
+      "id, title, type, deadline, status, urgency, importance, is_demo, completed_at, source, event_type",
+    )
     .eq("user_id", userId)
     .eq("status", status);
   if (error) throw new Error(`listDashboardTasks failed: ${error.message}`);
@@ -261,6 +304,8 @@ export async function listDashboardTasks(
     importance: t.importance,
     is_demo: t.is_demo,
     completed_at: t.completed_at,
+    source: t.source,
+    event_type: t.event_type,
     subtasks: (subsByTask.get(t.id) ?? []).sort((a, b) => a.order - b.order),
     blocks: (blocksByTask.get(t.id) ?? []).sort(
       (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
@@ -602,4 +647,122 @@ export async function getUserHistory(userId: string): Promise<UserHistory> {
     tasks: tasks.map((t) => ({ type: t.type, created_at: t.created_at })),
     incompleteSubtaskTitles: ((subData ?? []) as Array<{ title: string }>).map((s) => s.title),
   };
+}
+
+// ---- Day 7: Google Calendar → Cadence sync ----
+
+export interface ImportDedupIds {
+  /** Google event ids already imported as tasks (this user). */
+  importedEventIds: Set<string>;
+  /** Google event ids Cadence itself created (its confirmed work-blocks) — always skip. */
+  cadenceEventIds: Set<string>;
+}
+
+/** Ids to skip when importing, so sync is idempotent and never re-imports our own blocks. */
+export async function getImportDedupIds(userId: string): Promise<ImportDedupIds> {
+  const db = getSupabaseAdmin();
+
+  const { data: taskData, error } = await db
+    .from("tasks")
+    .select("id, google_event_id")
+    .eq("user_id", userId);
+  if (error) throw new Error(`getImportDedupIds tasks failed: ${error.message}`);
+
+  const tasks = (taskData ?? []) as Array<{ id: string; google_event_id: string | null }>;
+  const importedEventIds = new Set<string>();
+  for (const t of tasks) if (t.google_event_id) importedEventIds.add(t.google_event_id);
+
+  const cadenceEventIds = new Set<string>();
+  const taskIds = tasks.map((t) => t.id);
+  if (taskIds.length) {
+    const { data: blockData, error: bErr } = await db
+      .from("schedule_blocks")
+      .select("gcal_event_id")
+      .in("task_id", taskIds)
+      .not("gcal_event_id", "is", null);
+    if (bErr) throw new Error(`getImportDedupIds blocks failed: ${bErr.message}`);
+    for (const b of (blockData ?? []) as Array<{ gcal_event_id: string | null }>) {
+      if (b.gcal_event_id) cadenceEventIds.add(b.gcal_event_id);
+    }
+  }
+
+  return { importedEventIds, cadenceEventIds };
+}
+
+export interface ImportTaskArgs {
+  userId: string;
+  title: string;
+  deadline: string | null;
+  type: string | null;
+  /** 'deadline' | 'meeting' — drives how the card renders. */
+  eventType: string;
+  googleEventId: string;
+  /** Empty for meetings (surfaced as context only). */
+  subtasks: Subtask[];
+}
+
+/**
+ * Insert a task imported from Google Calendar: active immediately, tagged with its
+ * origin so completing it never deletes the user's real event. Idempotent against
+ * the (user_id, google_event_id) unique index — a duplicate import is a no-op.
+ */
+export async function insertImportedTask(args: ImportTaskArgs): Promise<string | null> {
+  const db = getSupabaseAdmin();
+
+  const { data: taskData, error } = await db
+    .from("tasks")
+    .insert({
+      user_id: args.userId,
+      title: args.title,
+      type: args.type,
+      deadline: args.deadline,
+      importance: 3,
+      status: "active",
+      urgency: "none",
+      source: "google_calendar",
+      google_event_id: args.googleEventId,
+      event_type: args.eventType,
+    })
+    .select("id")
+    .single();
+  // 23505 = unique violation (already imported by a concurrent sync) — treat as a no-op.
+  if (error) {
+    if ((error as { code?: string }).code === "23505") return null;
+    throw new Error(`insertImportedTask failed: ${error.message}`);
+  }
+  const taskId = (taskData as { id: string }).id;
+
+  if (args.subtasks.length) {
+    const { error: subErr } = await db.from("subtasks").insert(
+      args.subtasks.map((s) => ({
+        task_id: taskId,
+        title: s.title,
+        effort_minutes: s.effort_minutes,
+        order: s.order,
+        status: "todo",
+      })),
+    );
+    if (subErr) throw new Error(`insertImportedTask subtasks failed: ${subErr.message}`);
+  }
+
+  return taskId;
+}
+
+export async function setCalendarSyncedAt(userId: string): Promise<string> {
+  const db = getSupabaseAdmin();
+  const now = new Date().toISOString();
+  const { error } = await db.from("users").update({ calendar_synced_at: now }).eq("id", userId);
+  if (error) throw new Error(`setCalendarSyncedAt failed: ${error.message}`);
+  return now;
+}
+
+export async function getCalendarSyncedAt(userId: string): Promise<string | null> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("users")
+    .select("calendar_synced_at")
+    .eq("id", userId)
+    .single();
+  if (error) throw new Error(`getCalendarSyncedAt failed: ${error.message}`);
+  return (data as { calendar_synced_at: string | null }).calendar_synced_at;
 }

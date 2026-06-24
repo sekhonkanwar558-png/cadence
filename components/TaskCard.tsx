@@ -40,7 +40,14 @@ export default function TaskCard({
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted">
-        <span>{formatRelativeDeadline(task.deadline)}</span>
+        <span className="flex items-center gap-2">
+          {task.source === "google_calendar" && (
+            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+              From your calendar
+            </span>
+          )}
+          {formatRelativeDeadline(task.deadline)}
+        </span>
         {total > 0 && (
           <span>
             {done} of {total} done

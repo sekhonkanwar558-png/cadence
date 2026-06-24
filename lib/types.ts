@@ -117,6 +117,10 @@ export interface DashboardTask {
   importance: number;
   is_demo: boolean;
   completed_at: string | null;
+  /** 'cadence' (user-created) | 'google_calendar' (imported via sync). */
+  source: string;
+  /** 'task' | 'deadline' | 'meeting' — drives the imported-item tag. */
+  event_type: string;
   subtasks: DashboardSubtask[];
   blocks: DashboardBlock[];
   drafts: DashboardDraft[];

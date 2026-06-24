@@ -63,6 +63,75 @@ export async function getCalendarConflicts(
     .map((b) => ({ start: b.start, end: b.end }));
 }
 
+/** A real event on the user's calendar, normalized for import/classification. */
+export interface CalendarEvent {
+  id: string;
+  summary: string;
+  description: string;
+  /** ISO start — `dateTime` for timed events, 00:00:00 UTC for all-day. */
+  start: string;
+  /** ISO end — used as the deadline; 23:59:59.999 UTC on the last day for all-day. */
+  end: string;
+  htmlLink: string;
+}
+
+/** Google's event start/end: a timed event has `dateTime`, an all-day event has `date`. */
+type GoogleEventTime = { dateTime?: string | null; date?: string | null };
+
+/** Start as ISO. All-day events (date only) start at 00:00:00 UTC on their start date. */
+function eventStartIso(t: GoogleEventTime | undefined): string {
+  if (t?.dateTime) return t.dateTime;
+  if (t?.date) return `${t.date}T00:00:00.000Z`;
+  return "";
+}
+
+/**
+ * End as ISO. All-day events (date only) end at 23:59:59.999 UTC on their LAST day.
+ * People add deadlines as all-day events on their phones, so these must NOT be
+ * skipped. Google's all-day `end.date` is EXCLUSIVE (the morning after the last
+ * day), so end-of-day is one millisecond before that date's UTC midnight.
+ */
+function eventEndIso(t: GoogleEventTime | undefined): string {
+  if (t?.dateTime) return t.dateTime;
+  if (t?.date) return new Date(Date.parse(`${t.date}T00:00:00.000Z`) - 1).toISOString();
+  return "";
+}
+
+/**
+ * List the user's events on their primary calendar within [startIso, endIso].
+ * Expands recurring events to single instances and skips cancelled ones —
+ * used by calendar sync to pull existing meetings/deadlines into Cadence.
+ */
+export async function listCalendarEvents(
+  creds: GoogleCredentials,
+  startIso: string,
+  endIso: string,
+): Promise<CalendarEvent[]> {
+  const calendar = calendarClient(creds);
+  const res = await calendar.events.list({
+    calendarId: "primary",
+    timeMin: startIso,
+    timeMax: endIso,
+    singleEvents: true,
+    orderBy: "startTime",
+    maxResults: 50,
+  });
+
+  return (res.data.items ?? [])
+    .filter((e) => e.status !== "cancelled" && Boolean(e.id))
+    .map((e) => ({
+      id: e.id ?? "",
+      summary: e.summary ?? "(no title)",
+      description: e.description ?? "",
+      // Timed events use dateTime as-is; all-day events resolve their date to a
+      // full UTC day so phone-entered all-day deadlines are captured, not dropped.
+      start: eventStartIso(e.start),
+      end: eventEndIso(e.end),
+      htmlLink: e.htmlLink ?? "",
+    }))
+    .filter((e) => Boolean(e.start && e.end));
+}
+
 /**
  * Create an event on the user's primary Google Calendar.
  */
@@ -81,6 +150,14 @@ export async function createCalendarEvent(
       // correctly without a separate timeZone field.
       start: { dateTime: input.start_iso },
       end: { dateTime: input.end_iso },
+      // Popup nudges 60 + 15 min before — the core reminder behavior.
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "popup", minutes: 60 },
+          { method: "popup", minutes: 15 },
+        ],
+      },
     },
   });
 
@@ -88,4 +165,16 @@ export async function createCalendarEvent(
     eventLink: res.data.htmlLink ?? "",
     eventId: res.data.id ?? "",
   };
+}
+
+/**
+ * Delete an event from the user's primary calendar. Used for best-effort cleanup
+ * when a task is completed — callers should tolerate failures (e.g. already gone).
+ */
+export async function deleteCalendarEvent(
+  creds: GoogleCredentials,
+  eventId: string,
+): Promise<void> {
+  const calendar = calendarClient(creds);
+  await calendar.events.delete({ calendarId: "primary", eventId });
 }
