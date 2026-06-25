@@ -19,7 +19,7 @@ export function getAI(): GoogleGenAI {
 
 // Transient HTTP statuses worth retrying — 503 is the "model overloaded /
 // temporarily unavailable" case; the others are adjacent transient failures.
-const RETRYABLE_STATUSES = new Set([429, 500, 503, 504]);
+const RETRYABLE_STATUSES = new Set([500, 503, 504]);
 
 function isTransient(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;

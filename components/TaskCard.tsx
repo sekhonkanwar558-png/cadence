@@ -46,6 +46,11 @@ export default function TaskCard({
               From your calendar
             </span>
           )}
+          {task.source === "google_task" && (
+            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+              From Google Tasks
+            </span>
+          )}
           {formatRelativeDeadline(task.deadline)}
         </span>
         {total > 0 && (

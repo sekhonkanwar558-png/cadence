@@ -3,7 +3,8 @@ import { getSessionContext } from "@/lib/auth-session";
 import { buildUserContext } from "@/lib/agent/context";
 import { decompose } from "@/lib/gemini/decompose";
 import { classifyCalendarEvents } from "@/lib/gemini/classify";
-import { listCalendarEvents } from "@/lib/google/calendar";
+import { listCalendarEvents, type CalendarEvent } from "@/lib/google/calendar";
+import { listGoogleTasks } from "@/lib/google/tasks";
 import {
   upsertUser,
   getImportDedupIds,
@@ -64,21 +65,71 @@ export async function POST(req: NextRequest) {
 
     const now = new Date();
     const windowEnd = new Date(now.getTime() + SYNC_WINDOW_DAYS * 24 * 3600000);
-    const events = await listCalendarEvents(
-      credentials,
-      now.toISOString(),
-      windowEnd.toISOString(),
+
+    // TODO: temporary debug logging — remove once calendar sync is verified.
+    console.log(
+      `[calendar/sync DEBUG] accessToken(first20)=${
+        credentials.accessToken ? credentials.accessToken.slice(0, 20) : "MISSING"
+      } len=${credentials.accessToken?.length ?? 0} | refreshToken=${
+        credentials.refreshToken ? "present" : "MISSING"
+      } | expiresAt=${credentials.expiresAt} | nowEpoch=${Math.floor(Date.now() / 1000)}`,
     );
+    console.log(
+      `[calendar/sync DEBUG] timeMin=${now.toISOString()} | timeMax=${windowEnd.toISOString()}`,
+    );
+
+    // Pull calendar events (all calendars + birthdays) and Google Tasks in parallel.
+    // Both are best-effort internally, so a failure in one source doesn't lose the other.
+    let calendarEvents: CalendarEvent[] = [];
+    let googleTasks: CalendarEvent[] = [];
+    try {
+      [calendarEvents, googleTasks] = await Promise.all([
+        listCalendarEvents(credentials, now.toISOString(), windowEnd.toISOString()),
+        listGoogleTasks(credentials),
+      ]);
+    } catch (e) {
+      console.error("[calendar/sync DEBUG] fetch threw:", e);
+      throw e;
+    }
+
+    // Merge calendar events + tasks, dedup by id (tasks use the task_ id namespace).
+    const mergedById = new Map<string, CalendarEvent>();
+    for (const item of [...calendarEvents, ...googleTasks]) {
+      if (!mergedById.has(item.id)) mergedById.set(item.id, item);
+    }
+    const events = [...mergedById.values()];
+
+    console.log(
+      `[calendar/sync DEBUG] merged ${events.length} item(s): ` +
+        `${calendarEvents.length} calendar event(s) + ${googleTasks.length} task(s):`,
+    );
+    for (const e of events) {
+      console.log(
+        `[calendar/sync DEBUG]   • "${e.summary}" | ${e.start} → ${e.end} | id=${e.id} | source=${e.source}`,
+      );
+    }
 
     const { importedEventIds, cadenceEventIds } = await getImportDedupIds(userId);
     const newEvents = events.filter(
       (e) => !importedEventIds.has(e.id) && !cadenceEventIds.has(e.id),
     );
 
+    console.log(
+      `[calendar/sync DEBUG] dedup: ${events.length - newEvents.length} skipped ` +
+        `(${importedEventIds.size} already imported, ${cadenceEventIds.size} Cadence-created), ` +
+        `${newEvents.length} new to classify.`,
+    );
+
     let imported = 0;
     if (newEvents.length > 0) {
       const classes = await classifyCalendarEvents(newEvents);
       const contextSummary = await buildUserContext(userId, timezone);
+
+      // TODO: temporary debug logging — remove once calendar sync is verified.
+      console.log("[calendar/sync DEBUG] Gemini classifications:");
+      for (const e of newEvents) {
+        console.log(`[calendar/sync DEBUG]   • "${e.summary}" → ${classes.get(e.id) ?? "meeting"}`);
+      }
 
       for (const event of newEvents) {
         const cls = classes.get(event.id) ?? "meeting";
@@ -102,6 +153,7 @@ export async function POST(req: NextRequest) {
               type: "deadline",
               eventType: "deadline",
               googleEventId: event.id,
+              source: event.source,
               subtasks,
             });
             if (id) imported++;
@@ -114,6 +166,7 @@ export async function POST(req: NextRequest) {
               type: "meeting",
               eventType: "meeting",
               googleEventId: event.id,
+              source: event.source,
               subtasks: [],
             });
             if (id) imported++;

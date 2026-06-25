@@ -697,6 +697,8 @@ export interface ImportTaskArgs {
   /** 'deadline' | 'meeting' — drives how the card renders. */
   eventType: string;
   googleEventId: string;
+  /** Origin tag: 'google_calendar' (default) | 'google_task'. */
+  source?: string;
   /** Empty for meetings (surfaced as context only). */
   subtasks: Subtask[];
 }
@@ -719,7 +721,7 @@ export async function insertImportedTask(args: ImportTaskArgs): Promise<string |
       importance: 3,
       status: "active",
       urgency: "none",
-      source: "google_calendar",
+      source: args.source ?? "google_calendar",
       google_event_id: args.googleEventId,
       event_type: args.eventType,
     })

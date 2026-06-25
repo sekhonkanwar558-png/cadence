@@ -3,9 +3,10 @@ import GoogleProvider from "next-auth/providers/google";
 import { saveRefreshToken } from "@/lib/supabase/queries";
 
 /**
- * Scopes: identity + full Calendar access + Gmail send.
+ * Scopes: identity + full Calendar access + Gmail send + read-only Tasks.
  * - `calendar` covers create_calendar_block AND freebusy.query.
  * - `gmail.send` is the minimal scope to send mail (no inbox/draft read).
+ * - `tasks.readonly` lets us read the user's Google Tasks (read-only).
  * gmail.send is added lazily: existing calendar-only sessions keep working and
  * only re-consent when the user actually sends an email.
  */
@@ -15,6 +16,7 @@ const GOOGLE_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/tasks.readonly",
 ].join(" ");
 
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";

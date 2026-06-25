@@ -63,7 +63,10 @@ export async function getCalendarConflicts(
     .map((b) => ({ start: b.start, end: b.end }));
 }
 
-/** A real event on the user's calendar, normalized for import/classification. */
+/** Where an imported item came from — drives the DB `source` column. */
+export type ImportSource = "google_calendar" | "google_task";
+
+/** A real calendar event OR Google Task, normalized for import/classification. */
 export interface CalendarEvent {
   id: string;
   summary: string;
@@ -73,6 +76,9 @@ export interface CalendarEvent {
   /** ISO end — used as the deadline; 23:59:59.999 UTC on the last day for all-day. */
   end: string;
   htmlLink: string;
+  source: ImportSource;
+  /** True for events from the birthdays calendar — forces a 'meeting' classification. */
+  isBirthday?: boolean;
 }
 
 /** Google's event start/end: a timed event has `dateTime`, an all-day event has `date`. */
@@ -97,10 +103,61 @@ function eventEndIso(t: GoogleEventTime | undefined): string {
   return "";
 }
 
+/** Google's auto-managed contacts/birthdays calendar id. */
+const BIRTHDAYS_CALENDAR_ID = "addressbook#contacts@group.v.calendar.google.com";
+
+/** Fetch + normalize one calendar's events. Best-effort: a failing calendar yields []. */
+async function fetchEventsForCalendar(
+  calendar: ReturnType<typeof calendarClient>,
+  calendarId: string,
+  startIso: string,
+  endIso: string,
+): Promise<CalendarEvent[]> {
+  const isBirthday = calendarId === BIRTHDAYS_CALENDAR_ID;
+  try {
+    const res = await calendar.events.list({
+      calendarId,
+      timeMin: startIso,
+      timeMax: endIso,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 50,
+    });
+    const rawItems = res.data.items ?? [];
+    // TODO: temporary debug logging — remove once calendar sync is verified.
+    console.log(`[listCalendarEvents DEBUG] calendar "${calendarId}": ${rawItems.length} raw item(s)`);
+    return rawItems
+      .filter((e) => e.status !== "cancelled" && Boolean(e.id))
+      .map((e) => ({
+        id: e.id ?? "",
+        summary: e.summary ?? "(no title)",
+        description: e.description ?? "",
+        // Timed events use dateTime as-is; all-day events resolve their date to a
+        // full UTC day so phone-entered all-day deadlines are captured, not dropped.
+        start: eventStartIso(e.start),
+        end: eventEndIso(e.end),
+        htmlLink: e.htmlLink ?? "",
+        source: "google_calendar" as const,
+        isBirthday,
+      }))
+      .filter((e) => Boolean(e.start && e.end));
+  } catch (e) {
+    const err = e as { code?: number; message?: string; response?: { data?: unknown } };
+    console.error(
+      `[listCalendarEvents DEBUG] events.list("${calendarId}") threw:`,
+      err.code,
+      err.message,
+      JSON.stringify(err.response?.data ?? {}),
+    );
+    return [];
+  }
+}
+
 /**
- * List the user's events on their primary calendar within [startIso, endIso].
- * Expands recurring events to single instances and skips cancelled ones —
- * used by calendar sync to pull existing meetings/deadlines into Cadence.
+ * Pull events from ALL of the user's relevant calendars within [startIso, endIso]:
+ * every owned/writable + selected calendar (via calendarList), plus the birthdays
+ * calendar. Each calendar is fetched in parallel and best-effort, then merged and
+ * deduped by event id. Recurring events are expanded; cancelled ones are skipped.
  */
 export async function listCalendarEvents(
   creds: GoogleCredentials,
@@ -108,28 +165,42 @@ export async function listCalendarEvents(
   endIso: string,
 ): Promise<CalendarEvent[]> {
   const calendar = calendarClient(creds);
-  const res = await calendar.events.list({
-    calendarId: "primary",
-    timeMin: startIso,
-    timeMax: endIso,
-    singleEvents: true,
-    orderBy: "startTime",
-    maxResults: 50,
-  });
 
-  return (res.data.items ?? [])
-    .filter((e) => e.status !== "cancelled" && Boolean(e.id))
-    .map((e) => ({
-      id: e.id ?? "",
-      summary: e.summary ?? "(no title)",
-      description: e.description ?? "",
-      // Timed events use dateTime as-is; all-day events resolve their date to a
-      // full UTC day so phone-entered all-day deadlines are captured, not dropped.
-      start: eventStartIso(e.start),
-      end: eventEndIso(e.end),
-      htmlLink: e.htmlLink ?? "",
-    }))
-    .filter((e) => Boolean(e.start && e.end));
+  // 1. Discover which calendars to pull. primary is always kept; secondary calendars
+  //    only if the user owns/can-write them AND keeps them visible (selected).
+  let calendarIds: string[] = [];
+  try {
+    const listRes = await calendar.calendarList.list();
+    calendarIds = (listRes.data.items ?? [])
+      .filter(
+        (c) =>
+          c.primary === true ||
+          ((c.accessRole === "owner" || c.accessRole === "writer") && c.selected === true),
+      )
+      .map((c) => c.id)
+      .filter((id): id is string => Boolean(id));
+  } catch (e) {
+    console.error("[listCalendarEvents DEBUG] calendarList.list threw, falling back to primary:", e);
+    calendarIds = ["primary"];
+  }
+
+  // Always include the birthdays calendar.
+  const idsToFetch = Array.from(new Set([...calendarIds, BIRTHDAYS_CALENDAR_ID]));
+  console.log(`[listCalendarEvents DEBUG] fetching ${idsToFetch.length} calendar(s): ${idsToFetch.join(", ")}`);
+
+  // 2. Fetch every calendar's events in parallel.
+  const perCalendar = await Promise.all(
+    idsToFetch.map((id) => fetchEventsForCalendar(calendar, id, startIso, endIso)),
+  );
+
+  // 3. Merge + dedup by event id (the same event can appear on more than one calendar).
+  const byId = new Map<string, CalendarEvent>();
+  for (const events of perCalendar) {
+    for (const e of events) if (!byId.has(e.id)) byId.set(e.id, e);
+  }
+  const merged = [...byId.values()];
+  console.log(`[listCalendarEvents DEBUG] merged ${merged.length} event(s) across calendars (post-dedup)`);
+  return merged;
 }
 
 /**
