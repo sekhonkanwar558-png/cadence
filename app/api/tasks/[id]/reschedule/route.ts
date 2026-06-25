@@ -3,9 +3,15 @@ import { getSessionContext } from "@/lib/auth-session";
 import {
   upsertUser,
   getTaskForReschedule,
+  getFutureBlocksForReschedule,
+  markBlockCancelled,
   insertConfirmedBlock,
 } from "@/lib/supabase/queries";
-import { getCalendarConflicts, createCalendarEvent } from "@/lib/google/calendar";
+import {
+  getCalendarConflicts,
+  createCalendarEvent,
+  deleteCalendarEvent,
+} from "@/lib/google/calendar";
 import type { BusyBlock } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +68,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       refreshToken: session.refreshToken,
       expiresAt: session.expiresAt,
     };
+
+    // Clear the future slots we're superseding — but keep any slot whose subtask is
+    // already done (that work is finished). Best-effort per block; never blocks the
+    // reschedule. This is the fix: previously completed subtasks' events lingered.
+    const existing = await getFutureBlocksForReschedule(id);
+    for (const b of existing) {
+      if (b.subtaskStatus === "done") continue;
+      try {
+        await deleteCalendarEvent(credentials, b.gcalEventId);
+        await markBlockCancelled(b.id);
+      } catch (e) {
+        console.error(`Reschedule cleanup: couldn't cancel block ${b.id}`, e);
+      }
+    }
 
     const now = new Date();
     const deadline = target.task.deadline

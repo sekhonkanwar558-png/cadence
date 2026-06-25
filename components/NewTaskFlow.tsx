@@ -4,7 +4,7 @@ import { useState } from "react";
 import TaskComposer from "@/components/TaskComposer";
 import PlanProposal from "@/components/PlanProposal";
 import { formatTimeRange } from "@/lib/format";
-import type { ConfirmedBlock, PlanResult } from "@/lib/types";
+import type { ConfirmedBlock, FinalizeItem, PlanResult } from "@/lib/types";
 
 type Phase = "idle" | "thinking" | "proposed" | "confirming" | "confirmed";
 
@@ -43,7 +43,7 @@ export default function NewTaskFlow({
     }
   }
 
-  async function confirmPlan() {
+  async function confirmPlan(items: FinalizeItem[]) {
     if (!plan) return;
     setPhase("confirming");
     setError(null);
@@ -51,7 +51,11 @@ export default function NewTaskFlow({
       const res = await fetch("/api/agent/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: plan.taskId }),
+        body: JSON.stringify({
+          taskId: plan.taskId,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          items,
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error ?? "Couldn't confirm the plan.");

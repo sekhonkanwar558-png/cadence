@@ -1,88 +1,170 @@
 "use client";
 
-import type { PlanResult, ProposedBlock } from "@/lib/types";
-import { formatDayHeading, formatTimeRange, formatEffort } from "@/lib/format";
+import { useState } from "react";
+import type { PlanResult, ProposedBlock, FinalizeItem } from "@/lib/types";
+import { formatEffort, isoToDatetimeLocal, datetimeLocalAddMinutes } from "@/lib/format";
 import EmailDraftCard from "@/components/EmailDraftCard";
 
 interface Props {
   plan: PlanResult;
-  onConfirm: () => void;
+  onConfirm: (items: FinalizeItem[]) => void;
   onDismiss: () => void;
   confirming: boolean;
 }
 
-function groupByDay(blocks: Array<ProposedBlock & { id: string }>) {
-  const sorted = [...blocks].sort(
-    (a, b) => new Date(a.start_iso).getTime() - new Date(b.start_iso).getTime(),
-  );
-  const groups: Array<{ day: string; blocks: Array<ProposedBlock & { id: string }> }> = [];
-  for (const block of sorted) {
-    const day = formatDayHeading(block.start_iso);
-    const last = groups[groups.length - 1];
-    if (last && last.day === day) last.blocks.push(block);
-    else groups.push({ day, blocks: [block] });
-  }
-  return groups;
+/** Editable row: one step, its scheduled time, and how long it takes. */
+interface EditItem {
+  key: string;
+  title: string;
+  durationMin: number;
+  /** datetime-local value ("YYYY-MM-DDTHH:mm"), or "" when the step isn't scheduled. */
+  start: string;
+}
+
+const DURATIONS = [15, 30, 45, 60, 90, 120, 180];
+
+const INPUT =
+  "rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
+
+let keySeq = 0;
+const nextKey = () => `item-${keySeq++}`;
+
+/** Snap a raw block length to the nearest offered duration so the select always matches. */
+function snapDuration(b: ProposedBlock): number {
+  const mins = Math.round((new Date(b.end_iso).getTime() - new Date(b.start_iso).getTime()) / 60000);
+  return DURATIONS.reduce((best, d) => (Math.abs(d - mins) < Math.abs(best - mins) ? d : best), 30);
+}
+
+/** Pair each subtask with its proposed block (by label, else by order); keep extras. */
+function buildItems(plan: PlanResult): EditItem[] {
+  const blocks = [...plan.blocks];
+  const used = new Set<number>();
+  const items: EditItem[] = [];
+
+  plan.subtasks.forEach((s, i) => {
+    let bi = blocks.findIndex((b, idx) => !used.has(idx) && b.subtask === s.title);
+    if (bi === -1 && blocks[i] && !used.has(i) && !blocks[i].subtask) bi = i;
+    const b = bi >= 0 ? blocks[bi] : undefined;
+    if (bi >= 0) used.add(bi);
+    items.push({
+      key: nextKey(),
+      title: s.title,
+      durationMin: b ? snapDuration(b) : s.effort_minutes || 30,
+      start: b ? isoToDatetimeLocal(b.start_iso) : "",
+    });
+  });
+
+  blocks.forEach((b, idx) => {
+    if (used.has(idx)) return;
+    items.push({
+      key: nextKey(),
+      title: b.subtask ?? b.title,
+      durationMin: snapDuration(b),
+      start: isoToDatetimeLocal(b.start_iso),
+    });
+  });
+
+  return items;
 }
 
 export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }: Props) {
-  const dayGroups = groupByDay(plan.blocks);
+  const [items, setItems] = useState<EditItem[]>(() => buildItems(plan));
+
+  function update(key: string, patch: Partial<EditItem>) {
+    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  }
+  function remove(key: string) {
+    setItems((prev) => prev.filter((it) => it.key !== key));
+  }
+  function add() {
+    // New step starts where the last scheduled one ends — an obvious, adjustable default.
+    const lastScheduled = [...items].reverse().find((it) => it.start);
+    const start = lastScheduled
+      ? datetimeLocalAddMinutes(lastScheduled.start, lastScheduled.durationMin)
+      : "";
+    setItems((prev) => [...prev, { key: nextKey(), title: "", durationMin: 30, start }]);
+  }
+
+  function confirm() {
+    const payload: FinalizeItem[] = items
+      .filter((it) => it.title.trim())
+      .map((it) => ({
+        title: it.title.trim(),
+        effortMinutes: it.durationMin,
+        start: it.start ? `${it.start}:00` : null,
+        end: it.start ? `${datetimeLocalAddMinutes(it.start, it.durationMin)}:00` : null,
+      }));
+    onConfirm(payload);
+  }
+
+  const canConfirm = !confirming && items.some((it) => it.title.trim());
 
   return (
     <div className="flex flex-col gap-8">
       {/* The companion's voice */}
       <p className="font-serif text-2xl leading-snug tracking-tight">{plan.companionSummary}</p>
-
-      {/* One personalized insight — just the companion speaking (§2/§5) */}
       {plan.recommendation && (
         <p className="voice fade-in text-xl leading-snug text-text">{plan.recommendation}</p>
       )}
 
-      {/* Subtasks */}
-      {plan.subtasks.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium uppercase tracking-wide text-muted">The work</h3>
-          <ul className="flex flex-col gap-2">
-            {plan.subtasks.map((s, i) => (
-              <li key={i} className="flex items-baseline gap-3">
-                <span className="w-5 shrink-0 text-sm text-muted">{i + 1}</span>
-                <span className="flex-1">{s.title}</span>
-                <span className="shrink-0 text-sm text-muted">{formatEffort(s.effort_minutes)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* Proposed blocks */}
-      {dayGroups.length > 0 && (
-        <section className="flex flex-col gap-4">
-          <h3 className="text-sm font-medium uppercase tracking-wide text-muted">
-            When I&apos;d do it
-          </h3>
-          {dayGroups.map((group) => (
-            <div key={group.day} className="flex flex-col gap-2">
-              <p className="text-sm text-muted">{group.day}</p>
-              <ul className="flex flex-col gap-2">
-                {group.blocks.map((b) => (
-                  <li
-                    key={b.id}
-                    className="rounded-xl border border-border bg-surface px-4 py-3"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="font-medium">
-                        {formatTimeRange(b.start_iso, b.end_iso)}
-                      </span>
-                      <span className="text-sm text-accent">{b.subtask ?? b.title}</span>
-                    </div>
-                    {b.reason && <p className="mt-1 text-sm text-muted">{b.reason}</p>}
-                  </li>
-                ))}
-              </ul>
-            </div>
+      {/* The editable plan — every control visible and adjustable */}
+      <section className="flex flex-col gap-3">
+        <h3 className="text-sm font-medium uppercase tracking-wide text-muted">
+          The plan — edit anything before it&apos;s scheduled
+        </h3>
+        <ul className="flex flex-col gap-3">
+          {items.map((it) => (
+            <li
+              key={it.key}
+              className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center"
+            >
+              <input
+                value={it.title}
+                onChange={(e) => update(it.key, { title: e.target.value })}
+                placeholder="What&apos;s this step?"
+                aria-label="Step"
+                className={`flex-1 ${INPUT}`}
+              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="datetime-local"
+                  value={it.start}
+                  onChange={(e) => update(it.key, { start: e.target.value })}
+                  aria-label="Start time"
+                  className={INPUT}
+                />
+                <select
+                  value={it.durationMin}
+                  onChange={(e) => update(it.key, { durationMin: Number(e.target.value) })}
+                  aria-label="Duration"
+                  className={INPUT}
+                >
+                  {DURATIONS.map((d) => (
+                    <option key={d} value={d}>
+                      {formatEffort(d)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => remove(it.key)}
+                  aria-label="Remove step"
+                  className="rounded-lg px-2 py-2 text-muted transition-colors hover:text-overdue focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                >
+                  ✕
+                </button>
+              </div>
+            </li>
           ))}
-        </section>
-      )}
+        </ul>
+        <button
+          type="button"
+          onClick={add}
+          className="w-fit rounded-xl border border-border bg-surface px-4 py-2 text-sm transition-colors hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+        >
+          + Add a step
+        </button>
+      </section>
 
       {/* Suggested email — review, edit, and send (or connect Gmail first) */}
       {plan.emailDraft && (
@@ -97,8 +179,8 @@ export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }:
       {/* Actions */}
       <div className="flex items-center gap-4 pt-2">
         <button
-          onClick={onConfirm}
-          disabled={confirming || plan.blocks.length === 0}
+          onClick={confirm}
+          disabled={!canConfirm}
           className="rounded-xl bg-accent px-5 py-2.5 font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {confirming ? "Putting it on your calendar…" : "Confirm plan"}

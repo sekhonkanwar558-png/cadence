@@ -66,6 +66,18 @@ export interface PlanResult {
   emailDraft: (ProposedEmail & { id: string }) | null;
 }
 
+/**
+ * One edited plan item the proposal screen sends to the finalize/confirm route.
+ * `start`/`end` are timezone-naive wall-clock ("YYYY-MM-DDTHH:mm:ss") or null when the
+ * step has no scheduled time; the server resolves them with the request's `timezone`.
+ */
+export interface FinalizeItem {
+  title: string;
+  effortMinutes: number;
+  start: string | null;
+  end: string | null;
+}
+
 /** A block after the user confirms and it becomes a real Calendar event. */
 export interface ConfirmedBlock {
   id: string;

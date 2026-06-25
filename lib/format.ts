@@ -22,6 +22,23 @@ export function formatEffort(minutes: number): string {
   return m ? `${h} hr ${m} min` : `${h} hr`;
 }
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** ISO instant → a `<input type="datetime-local">` value in the browser's local zone. */
+export function isoToDatetimeLocal(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** Add minutes to a datetime-local value, returning another datetime-local value (local zone). */
+export function datetimeLocalAddMinutes(value: string, minutes: number): string {
+  const d = new Date(value); // a value without offset parses as local time
+  if (Number.isNaN(d.getTime())) return value;
+  const end = new Date(d.getTime() + minutes * 60000);
+  return `${end.getFullYear()}-${pad2(end.getMonth() + 1)}-${pad2(end.getDate())}T${pad2(end.getHours())}:${pad2(end.getMinutes())}`;
+}
+
 /** "in 6 hr", "in 2 days", "40 min ago" — calm relative deadline for task cards. */
 export function formatRelativeDeadline(iso: string | null): string {
   if (!iso) return "no deadline";

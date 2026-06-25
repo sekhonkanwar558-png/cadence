@@ -79,17 +79,25 @@ export async function insertProposedPlan(args: InsertPlanArgs): Promise<Inserted
   const taskRow = taskData as TaskRow;
   const taskId = taskRow.id;
 
+  // Map subtask title → id so each block can be linked to the subtask it covers.
+  const subtaskIdByTitle = new Map<string, string>();
   if (args.subtasks.length) {
-    const { error } = await db.from("subtasks").insert(
-      args.subtasks.map((s) => ({
-        task_id: taskId,
-        title: s.title,
-        effort_minutes: s.effort_minutes,
-        order: s.order,
-        status: "todo",
-      })),
-    );
-    if (error) throw new Error(`insert subtasks failed: ${error.message}`);
+    const { data, error } = await db
+      .from("subtasks")
+      .insert(
+        args.subtasks.map((s) => ({
+          task_id: taskId,
+          title: s.title,
+          effort_minutes: s.effort_minutes,
+          order: s.order,
+          status: "todo",
+        })),
+      )
+      .select("id, title");
+    if (error || !data) throw new Error(`insert subtasks failed: ${error?.message ?? "no rows"}`);
+    for (const row of data as Array<{ id: string; title: string }>) {
+      if (!subtaskIdByTitle.has(row.title)) subtaskIdByTitle.set(row.title, row.id);
+    }
   }
 
   let blocksWithId: Array<ProposedBlock & { id: string }> = [];
@@ -104,6 +112,9 @@ export async function insertProposedPlan(args: InsertPlanArgs): Promise<Inserted
           end: b.end_iso,
           description: b.description ?? null,
           status: "proposed",
+          // Best-effort link to the subtask this block covers (by label), so reschedule
+          // can later skip blocks whose subtask is already done.
+          subtask_id: b.subtask ? subtaskIdByTitle.get(b.subtask) ?? null : null,
         })),
       )
       .select("id");
@@ -538,6 +549,105 @@ export async function getTaskForReschedule(
   };
 }
 
+export interface RescheduleBlock {
+  id: string;
+  gcalEventId: string;
+  start: string;
+  /** Status of the block's linked subtask, or null if the block isn't linked. */
+  subtaskStatus: string | null;
+}
+
+/**
+ * Future confirmed blocks for a task, each annotated with its subtask's status.
+ * Reschedule uses this to cancel only the slots whose work isn't done yet, leaving
+ * completed subtasks' events on the calendar. Two queries (no PostgREST embed) to
+ * stay robust against relationship-cache timing.
+ */
+export async function getFutureBlocksForReschedule(taskId: string): Promise<RescheduleBlock[]> {
+  const db = getSupabaseAdmin();
+  const nowIso = new Date().toISOString();
+
+  const { data, error } = await db
+    .from("schedule_blocks")
+    .select("id, gcal_event_id, start, subtask_id")
+    .eq("task_id", taskId)
+    .eq("status", "confirmed")
+    .not("gcal_event_id", "is", null)
+    .gt("start", nowIso);
+  if (error) throw new Error(`getFutureBlocksForReschedule failed: ${error.message}`);
+
+  const blocks = (data ?? []) as Array<{
+    id: string;
+    gcal_event_id: string;
+    start: string;
+    subtask_id: string | null;
+  }>;
+  if (blocks.length === 0) return [];
+
+  const subtaskIds = blocks.map((b) => b.subtask_id).filter((id): id is string => Boolean(id));
+  const statusById = new Map<string, string>();
+  if (subtaskIds.length) {
+    const { data: subs } = await db.from("subtasks").select("id, status").in("id", subtaskIds);
+    for (const s of (subs ?? []) as Array<{ id: string; status: string }>) {
+      statusById.set(s.id, s.status);
+    }
+  }
+
+  return blocks.map((b) => ({
+    id: b.id,
+    gcalEventId: b.gcal_event_id,
+    start: b.start,
+    subtaskStatus: b.subtask_id ? statusById.get(b.subtask_id) ?? null : null,
+  }));
+}
+
+// ---- Editable proposal: reconcile a proposed plan to the user's edits at confirm ----
+
+/** Drop a task's still-proposed schedule blocks (no Calendar events exist for them yet). */
+export async function deleteProposedBlocks(taskId: string): Promise<void> {
+  const db = getSupabaseAdmin();
+  const { error } = await db
+    .from("schedule_blocks")
+    .delete()
+    .eq("task_id", taskId)
+    .eq("status", "proposed");
+  if (error) throw new Error(`deleteProposedBlocks failed: ${error.message}`);
+}
+
+/**
+ * Replace a (still-proposed) task's subtasks with an edited set, returning the new
+ * ids keyed by order so the confirm route can link each created block to its subtask.
+ * Safe because a proposed task isn't on the dashboard and nothing else references its rows.
+ */
+export async function replaceProposedSubtasks(
+  taskId: string,
+  subtasks: Array<{ title: string; effort_minutes: number; order: number }>,
+): Promise<Array<{ id: string; order: number }>> {
+  const db = getSupabaseAdmin();
+
+  const { error: delErr } = await db.from("subtasks").delete().eq("task_id", taskId);
+  if (delErr) throw new Error(`replaceProposedSubtasks delete failed: ${delErr.message}`);
+
+  if (subtasks.length === 0) return [];
+
+  const { data, error } = await db
+    .from("subtasks")
+    .insert(
+      subtasks.map((s) => ({
+        task_id: taskId,
+        title: s.title,
+        effort_minutes: s.effort_minutes,
+        order: s.order,
+        status: "todo",
+      })),
+    )
+    .select("id, order");
+  if (error || !data) {
+    throw new Error(`replaceProposedSubtasks insert failed: ${error?.message ?? "no rows"}`);
+  }
+  return (data as Array<{ id: string; order: number }>).map((r) => ({ id: r.id, order: r.order }));
+}
+
 export async function insertConfirmedBlock(args: {
   taskId: string;
   title: string;
@@ -546,6 +656,7 @@ export async function insertConfirmedBlock(args: {
   description?: string | null;
   gcalEventId: string;
   eventLink: string;
+  subtaskId?: string | null;
 }): Promise<string> {
   const db = getSupabaseAdmin();
   const { data, error } = await db
@@ -559,6 +670,7 @@ export async function insertConfirmedBlock(args: {
       status: "confirmed",
       gcal_event_id: args.gcalEventId,
       event_link: args.eventLink,
+      subtask_id: args.subtaskId ?? null,
     })
     .select("id")
     .single();
