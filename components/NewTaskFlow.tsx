@@ -43,6 +43,36 @@ export default function NewTaskFlow({
     }
   }
 
+  /**
+   * Revise the proposal from a plain-language instruction. Returns the revised items +
+   * a companion note; throws on failure (PlanProposal resets its own "thinking" state,
+   * the banner here shows the reason).
+   */
+  async function replanPlan(
+    instruction: string,
+    current: FinalizeItem[],
+  ): Promise<{ items: FinalizeItem[]; note: string }> {
+    if (!plan) throw new Error("No plan to revise.");
+    setError(null);
+    const res = await fetch("/api/agent/replan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskTitle: plan.task.title,
+        deadline: plan.task.deadline,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        instruction,
+        items: current,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setError(data.error ?? "Couldn't revise the plan.");
+      throw new Error(data.error ?? "replan failed");
+    }
+    return { items: data.items as FinalizeItem[], note: String(data.note ?? "") };
+  }
+
   async function confirmPlan(items: FinalizeItem[]) {
     if (!plan) return;
     setPhase("confirming");
@@ -91,6 +121,7 @@ export default function NewTaskFlow({
         <PlanProposal
           plan={plan}
           onConfirm={confirmPlan}
+          onReplan={replanPlan}
           onDismiss={onClose}
           confirming={phase === "confirming"}
         />

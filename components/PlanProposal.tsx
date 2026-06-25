@@ -8,6 +8,11 @@ import EmailDraftCard from "@/components/EmailDraftCard";
 interface Props {
   plan: PlanResult;
   onConfirm: (items: FinalizeItem[]) => void;
+  /** Revise the plan from a plain-language instruction; resolves with revised items + a note. */
+  onReplan: (
+    instruction: string,
+    current: FinalizeItem[],
+  ) => Promise<{ items: FinalizeItem[]; note: string }>;
   onDismiss: () => void;
   confirming: boolean;
 }
@@ -29,10 +34,37 @@ const INPUT =
 let keySeq = 0;
 const nextKey = () => `item-${keySeq++}`;
 
+/** Snap any minute count to the nearest offered duration so the select always matches. */
+function snapToDuration(mins: number): number {
+  return DURATIONS.reduce((best, d) => (Math.abs(d - mins) < Math.abs(best - mins) ? d : best), 30);
+}
+
 /** Snap a raw block length to the nearest offered duration so the select always matches. */
 function snapDuration(b: ProposedBlock): number {
   const mins = Math.round((new Date(b.end_iso).getTime() - new Date(b.start_iso).getTime()) / 60000);
-  return DURATIONS.reduce((best, d) => (Math.abs(d - mins) < Math.abs(best - mins) ? d : best), 30);
+  return snapToDuration(mins);
+}
+
+/** Edited rows → the wall-clock FinalizeItem shape the server expects. */
+function toFinalize(items: EditItem[]): FinalizeItem[] {
+  return items
+    .filter((it) => it.title.trim())
+    .map((it) => ({
+      title: it.title.trim(),
+      effortMinutes: it.durationMin,
+      start: it.start ? `${it.start}:00` : null,
+      end: it.start ? `${datetimeLocalAddMinutes(it.start, it.durationMin)}:00` : null,
+    }));
+}
+
+/** Server FinalizeItems (revised plan) → editable rows. */
+function fromFinalize(items: FinalizeItem[]): EditItem[] {
+  return items.map((it) => ({
+    key: nextKey(),
+    title: it.title,
+    durationMin: snapToDuration(it.effortMinutes),
+    start: it.start ? it.start.slice(0, 16) : "",
+  }));
 }
 
 /** Pair each subtask with its proposed block (by label, else by order); keep extras. */
@@ -67,8 +99,12 @@ function buildItems(plan: PlanResult): EditItem[] {
   return items;
 }
 
-export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }: Props) {
+export default function PlanProposal({ plan, onConfirm, onReplan, onDismiss, confirming }: Props) {
   const [items, setItems] = useState<EditItem[]>(() => buildItems(plan));
+  const [instruction, setInstruction] = useState("");
+  const [replanning, setReplanning] = useState(false);
+  /** The companion's note from the latest revision; shown in place of the recommendation. */
+  const [note, setNote] = useState<string | null>(null);
 
   function update(key: string, patch: Partial<EditItem>) {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
@@ -86,25 +122,36 @@ export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }:
   }
 
   function confirm() {
-    const payload: FinalizeItem[] = items
-      .filter((it) => it.title.trim())
-      .map((it) => ({
-        title: it.title.trim(),
-        effortMinutes: it.durationMin,
-        start: it.start ? `${it.start}:00` : null,
-        end: it.start ? `${datetimeLocalAddMinutes(it.start, it.durationMin)}:00` : null,
-      }));
-    onConfirm(payload);
+    onConfirm(toFinalize(items));
   }
 
-  const canConfirm = !confirming && items.some((it) => it.title.trim());
+  async function handleReplan() {
+    const text = instruction.trim();
+    if (!text || replanning || confirming) return;
+    setReplanning(true);
+    try {
+      const revised = await onReplan(text, toFinalize(items));
+      setItems(fromFinalize(revised.items));
+      setNote(revised.note || null);
+      setInstruction("");
+    } catch {
+      // The error banner is owned by the parent flow; just drop out of "thinking".
+    } finally {
+      setReplanning(false);
+    }
+  }
+
+  const busy = confirming || replanning;
+  const canConfirm = !busy && items.some((it) => it.title.trim());
 
   return (
     <div className="flex flex-col gap-8">
-      {/* The companion's voice */}
+      {/* The companion's voice — the latest revision note takes over once the plan changes. */}
       <p className="font-serif text-2xl leading-snug tracking-tight">{plan.companionSummary}</p>
-      {plan.recommendation && (
-        <p className="voice fade-in text-xl leading-snug text-text">{plan.recommendation}</p>
+      {(note ?? plan.recommendation) && (
+        <p key={note ?? "rec"} className="voice fade-in text-xl leading-snug text-text">
+          {note ?? plan.recommendation}
+        </p>
       )}
 
       {/* The editable plan — every control visible and adjustable */}
@@ -166,6 +213,38 @@ export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }:
         </button>
       </section>
 
+      {/* Revise in plain language — the companion reshapes the plan for you (§4) */}
+      <section className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium uppercase tracking-wide text-muted">
+          Or tell me what to change
+        </h3>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleReplan();
+              }
+            }}
+            placeholder="“Do this tomorrow morning” · “I'm only free after 6pm”"
+            aria-label="Describe a change to the plan"
+            disabled={busy}
+            className={`flex-1 ${INPUT} disabled:opacity-50`}
+          />
+          <button
+            type="button"
+            onClick={handleReplan}
+            disabled={busy || !instruction.trim()}
+            aria-busy={replanning}
+            className="rounded-xl border border-border bg-surface px-4 py-2 text-sm transition-colors hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {replanning ? "Thinking…" : "Revise"}
+          </button>
+        </div>
+      </section>
+
       {/* Suggested email — review, edit, and send (or connect Gmail first) */}
       {plan.emailDraft && (
         <section className="flex flex-col gap-2">
@@ -187,7 +266,7 @@ export default function PlanProposal({ plan, onConfirm, onDismiss, confirming }:
         </button>
         <button
           onClick={onDismiss}
-          disabled={confirming}
+          disabled={busy}
           className="text-muted transition-colors hover:text-text disabled:opacity-40"
         >
           Not now

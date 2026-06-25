@@ -53,6 +53,7 @@ export default function Home() {
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rescheduling, setRescheduling] = useState(false);
+  const [replanning, setReplanning] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [completionPromptId, setCompletionPromptId] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
@@ -202,6 +203,39 @@ export default function Home() {
       setRescheduleError(e instanceof Error ? e.message : "Couldn't reschedule.");
     } finally {
       setRescheduling(false);
+    }
+  }
+
+  /**
+   * Layer 3 — re-plan an active task from a plain-language instruction. The route
+   * supersedes the task's future calendar events; we re-fetch so the open detail
+   * reflects the new blocks. Returns the companion's note; resets loading + surfaces
+   * the reason on failure.
+   */
+  async function replanTask(instruction: string): Promise<{ note: string }> {
+    if (!selectedId) throw new Error("No task selected.");
+    setReplanning(true);
+    setRescheduleError(null);
+    try {
+      const res = await fetch(`/api/tasks/${selectedId}/replan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instruction,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error ?? "Couldn't revise the plan.");
+      const tRes = await fetch("/api/tasks");
+      const tData = await tRes.json();
+      if (tData.ok) applyPayload(tData);
+      return { note: String(data.note ?? "") };
+    } catch (e) {
+      setRescheduleError(e instanceof Error ? e.message : "Couldn't revise the plan.");
+      throw e;
+    } finally {
+      setReplanning(false);
     }
   }
 
@@ -371,6 +405,8 @@ export default function Home() {
           }}
           onReschedule={reschedule}
           rescheduling={rescheduling}
+          onReplan={replanTask}
+          replanning={replanning}
           rescheduleError={rescheduleError}
           onToggleSubtask={toggleSubtask}
         />

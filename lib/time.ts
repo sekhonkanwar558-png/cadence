@@ -42,3 +42,26 @@ export function wallClockToInstantIso(wallClock: string, timeZone: string): stri
   if (off2 !== off) instant = new Date(guess.getTime() - off2);
   return instant.toISOString();
 }
+
+/**
+ * Inverse of {@link wallClockToInstantIso}: render a UTC instant as the naive
+ * wall-clock string ("YYYY-MM-DDTHH:mm:ss") an observer in `timeZone` would read
+ * off the clock. Used by replan to write shifted slots back in the user's local zone.
+ */
+export function instantToWallClock(instant: Date, timeZone: string): string {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const m: Record<string, string> = {};
+  for (const p of dtf.formatToParts(instant)) {
+    if (p.type !== "literal") m[p.type] = p.value;
+  }
+  return `${m.year}-${m.month}-${m.day}T${m.hour}:${m.minute}:${m.second}`;
+}
