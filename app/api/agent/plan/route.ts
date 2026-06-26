@@ -49,7 +49,9 @@ export async function POST(req: NextRequest) {
 
     const inserted = await insertProposedPlan({
       userId,
-      task,
+      // Persist the resolved deadline (explicit value wins, else inferred from the text)
+      // so the dashboard's "in X days" label shows for natural-language tasks.
+      task: { ...task, deadline: task.deadline ?? proposal.deadline ?? undefined },
       subtasks: proposal.subtasks,
       blocks: proposal.blocks,
       email: proposal.email,

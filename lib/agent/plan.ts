@@ -7,6 +7,7 @@ import {
 import { generateContentWithRetry } from "@/lib/gemini/client";
 import { planningTools } from "@/lib/gemini/tools";
 import { decompose } from "@/lib/gemini/decompose";
+import { extractDeadline } from "@/lib/gemini/extract-deadline";
 import { getCalendarConflicts, type GoogleCredentials } from "@/lib/google/calendar";
 import type { ProposedBlock, ProposedEmail, Subtask, TaskInput } from "@/lib/types";
 
@@ -25,6 +26,8 @@ export interface ProposeOutput {
   email: ProposedEmail | null;
   companionSummary: string;
   recommendation: string;
+  /** Resolved deadline (ISO) — explicit user value, else inferred from the task text, else null. */
+  deadline: string | null;
 }
 
 function systemPrompt(task: TaskInput, now: string): string {
@@ -73,6 +76,9 @@ export async function proposePlan({
   let email: ProposedEmail | null = null;
   let companionSummary = "";
   let recommendation = "";
+  // (1) An explicit user-supplied deadline always wins; otherwise we capture what the
+  // model infers during decomposition, and fall back to text extraction below.
+  let resolvedDeadline: string | null = task.deadline ?? null;
 
   const contents: Content[] = [
     { role: "user", parts: [{ text: systemPrompt(task, now) }] },
@@ -93,6 +99,12 @@ export async function proposePlan({
         });
         subtasks.splice(0, subtasks.length, ...result.subtasks);
         recommendation = result.recommendation;
+        // (2) If the model surfaced a deadline in its tool call, capture it (unless the
+        // user already gave one). Accept only a parseable ISO instant.
+        if (!resolvedDeadline && args.deadline) {
+          const d = String(args.deadline).trim();
+          if (d && !Number.isNaN(new Date(d).getTime())) resolvedDeadline = d;
+        }
         return { subtasks: result.subtasks };
       }
       case "get_calendar_conflicts": {
@@ -166,5 +178,14 @@ export async function proposePlan({
         : "I've broken this down for you — take a look.";
   }
 
-  return { subtasks, blocks, email, companionSummary, recommendation };
+  // (3) Still no deadline? Read it straight from the task text as a last resort.
+  if (!resolvedDeadline) {
+    try {
+      resolvedDeadline = await extractDeadline(task.title, now, task.timezone);
+    } catch (e) {
+      console.warn("[plan] deadline extraction failed:", e);
+    }
+  }
+
+  return { subtasks, blocks, email, companionSummary, recommendation, deadline: resolvedDeadline };
 }
