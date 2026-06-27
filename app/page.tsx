@@ -276,9 +276,10 @@ export default function Home() {
             <button
               onClick={() => setCalendarOpen(true)}
               aria-label="Open calendar"
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:border-accent/40 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+              className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent/40 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
             >
-              <CalendarIcon />
+              <span aria-hidden="true" className="text-base leading-none">📅</span>
+              Calendar
             </button>
             <span className="text-sm text-muted">
               {session.user?.email}{" "}
@@ -323,7 +324,7 @@ export default function Home() {
           >
             Continue with Google
           </button>
-          <p className="max-w-sm text-sm text-muted">
+          <p className="max-w-sm rounded-lg border border-due-soon/40 bg-due-soon/10 px-3 py-2 text-sm text-text">
             {`You'll see a 'Google hasn't verified this app' warning — this is expected for a hackathon submission. Click Advanced → 'Go to cadence-834242762126.asia-south1.run.app (unsafe)' to continue safely.`}
           </p>
         </section>
@@ -375,6 +376,7 @@ export default function Home() {
                 + New task
               </button>
             </div>
+            <p className="text-xs text-muted">Checks approaching deadlines and sends you email nudges.</p>
             {lastSynced && (
               <p className="text-xs text-muted">Calendar synced {relativeTime(lastSynced)}.</p>
             )}
@@ -396,6 +398,24 @@ export default function Home() {
                   Tell me what you&apos;re working on and I&apos;ll break it down, find time for it,
                   and keep watch. Start with one of these:
                 </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <p className="text-sm font-medium text-text">What you can do</p>
+                <ul className="flex flex-col gap-2 border-l-2 border-accent/30 pl-4">
+                  <li className="text-sm leading-snug text-muted">
+                    Type any task — Cadence breaks it into steps and schedules focus time on your
+                    calendar.
+                  </li>
+                  <li className="text-sm leading-snug text-muted">
+                    Sync your Google Calendar to import deadlines and meetings automatically.
+                  </li>
+                  <li className="text-sm leading-snug text-muted">
+                    Ask Cadence to adjust your plan in plain language anytime.
+                  </li>
+                  <li className="text-sm leading-snug text-muted">
+                    “Check my deadlines” sends you autonomous email nudges when time is running short.
+                  </li>
+                </ul>
               </div>
               <div className="flex flex-wrap gap-2">
                 {(showAllExamples ? EXAMPLE_TASKS : EXAMPLE_TASKS.slice(0, 3)).map((ex) => (
@@ -468,27 +488,6 @@ function relativeTime(iso: string): string {
   if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
   const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
-}
-
-function CalendarIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3" y="4.5" width="18" height="16" rx="2" />
-      <line x1="3" y1="9" x2="21" y2="9" />
-      <line x1="8" y1="2.5" x2="8" y2="6" />
-      <line x1="16" y1="2.5" x2="16" y2="6" />
-    </svg>
-  );
 }
 
 /** Shared base for the landing-page capability icons — Tabler stroke style. */
