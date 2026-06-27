@@ -39,6 +39,26 @@ const EXAMPLE_TASKS = [
   "File GST return before deadline",
 ];
 
+// Shown on the signed-out landing page so first-time visitors see what Cadence
+// *does* (it acts, it doesn't just remind) before committing to Google sign-in.
+const CAPABILITIES = [
+  {
+    Icon: PencilIcon,
+    title: "Tell it what's due",
+    body: "Type a task in plain language. Cadence breaks it into steps, finds time in your calendar, and schedules the work automatically.",
+  },
+  {
+    Icon: EyeIcon,
+    title: "It watches while you work",
+    body: "An autonomous monitor checks your deadlines in the background and emails you when something needs urgent attention — no app open required.",
+  },
+  {
+    Icon: MessagesIcon,
+    title: "Change plans by talking",
+    body: "Tell Cadence what changed (“move everything to tomorrow”, “I finished the outline”) and it reshapes your schedule and updates your calendar.",
+  },
+];
+
 export default function Home() {
   const { data: session, status } = useSession();
   const [mode, setMode] = useState<Mode>("dashboard");
@@ -281,6 +301,22 @@ export default function Home() {
               deadlines approach — so you only deal with what genuinely needs you.
             </p>
           </div>
+          <ul className="flex max-w-lg flex-col gap-3">
+            {CAPABILITIES.map(({ Icon, title, body }) => (
+              <li
+                key={title}
+                className="flex items-start gap-3 rounded-xl border border-border bg-surface px-4 py-3"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <Icon />
+                </span>
+                <div>
+                  <h2 className="font-medium text-text">{title}</h2>
+                  <p className="mt-1 text-sm leading-snug text-muted">{body}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
           <button
             onClick={() => signIn("google")}
             className="w-fit rounded-xl bg-accent px-5 py-2.5 font-medium text-white transition-opacity hover:opacity-90"
@@ -449,5 +485,51 @@ function CalendarIcon() {
       <line x1="8" y1="2.5" x2="8" y2="6" />
       <line x1="16" y1="2.5" x2="16" y2="6" />
     </svg>
+  );
+}
+
+/** Shared base for the landing-page capability icons — Tabler stroke style. */
+function CapIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <CapIcon>
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+    </CapIcon>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <CapIcon>
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" />
+    </CapIcon>
+  );
+}
+
+function MessagesIcon() {
+  return (
+    <CapIcon>
+      <path d="M21 14l-3 -3h-7a1 1 0 0 1 -1 -1v-6a1 1 0 0 1 1 -1h9a1 1 0 0 1 1 1v10" />
+      <path d="M14 15v2a1 1 0 0 1 -1 1h-7l-3 3v-10a1 1 0 0 1 1 -1h2" />
+    </CapIcon>
   );
 }
