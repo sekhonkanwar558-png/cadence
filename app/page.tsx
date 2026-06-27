@@ -323,6 +323,9 @@ export default function Home() {
           >
             Continue with Google
           </button>
+          <p className="max-w-sm text-sm text-muted">
+            {`You'll see a 'Google hasn't verified this app' warning — this is expected for a hackathon submission. Click Advanced → 'Go to cadence-834242762126.asia-south1.run.app (unsafe)' to continue safely.`}
+          </p>
         </section>
       )}
 
