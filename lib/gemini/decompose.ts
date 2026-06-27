@@ -11,6 +11,8 @@ export interface DecomposeArgs {
   timezone: string;
   /** A short, lightweight summary of the user's history (§4) — may be empty. */
   contextSummary?: string;
+  /** Layer B: the user's other commitments + 7-day schedule load — may be empty. */
+  scheduleContext?: string;
 }
 
 export interface DecomposeResult {
@@ -28,20 +30,33 @@ export async function decompose(args: DecomposeArgs): Promise<DecomposeResult> {
   const prompt = [
     "You are Cadence, a calm productivity companion.",
     `The current time is ${args.now} (timezone ${args.timezone}).`,
-    `Break this task into a short, ordered list of concrete subtasks a person can actually start.`,
-    `Estimate focused effort in minutes for each. Be realistic and minimal — prefer 3-6 subtasks,`,
-    `no padding. Order by dependency (what must happen first gets the lowest order).`,
     "",
-    "Then write ONE sharp, specific insight (a single sentence) that would genuinely help this",
-    "person — grounded in the task type, how close the deadline is, the subtasks you created, and",
-    "the time of day. Write it the way a thoughtful friend would speak, warm and plain. No prefix,",
-    "no emoji, no 'Tip:'. Just the sentence.",
+    "Break this task into the actual steps THIS person needs — not a generic template.",
+    "Read what they wrote closely and let the specifics drive the steps:",
+    "- Name the real things in the task. If they mention concepts, deliverables, people, or weak",
+    "  spots, the steps must reference those by name (e.g. 'Drill tree traversals & BST operations',",
+    "  not 'Review material'). A step a stranger could have written is a failed step.",
+    "- Use their stated difficulty or priority: give flagged/weak/high-stakes parts their own,",
+    "  deeper steps and trim or merge the parts they already seem solid on.",
+    "- Vary the number of steps to fit the work: a quick errand may be 2, a real project 6-7.",
+    "  Never pad to hit a number, and avoid filler like 'take notes' or 'final review' unless the",
+    "  task genuinely calls for it.",
+    "- Order so the work flows: dependencies first, and when it helps, put the hardest or most",
+    "  important part earlier while energy is highest.",
+    "Estimate realistic focused minutes per step.",
+    "",
+    "Then write ONE recommendation: a single warm, plain sentence that adds something the schedule",
+    "summary will NOT already say — a risk to watch, where to start, or what to protect if time",
+    "gets tight (e.g. 'Trees carry the most marks here — if one block slips, protect that one').",
+    "Ground it in something specific they wrote. Perceptive, not flowery. No prefix, no emoji,",
+    "no 'Tip:'.",
     "",
     `Task: ${args.title}`,
     args.type ? `Type: ${args.type}` : "",
     args.deadline ? `Deadline: ${args.deadline}` : "",
     args.context ? `Context: ${args.context}` : "",
     args.contextSummary ? `About this user: ${args.contextSummary}` : "",
+    args.scheduleContext ? `What else the user has on: ${args.scheduleContext}` : "",
   ]
     .filter(Boolean)
     .join("\n");

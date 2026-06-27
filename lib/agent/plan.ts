@@ -18,6 +18,8 @@ export interface ProposeArgs {
   credentials: GoogleCredentials;
   /** Lightweight history summary fed to the recommendation prompt (§4). */
   contextSummary?: string;
+  /** Layer B: other commitments + 7-day schedule load, fed to the loop AND decompose. */
+  scheduleContext?: string;
 }
 
 export interface ProposeOutput {
@@ -30,7 +32,7 @@ export interface ProposeOutput {
   deadline: string | null;
 }
 
-function systemPrompt(task: TaskInput, now: string): string {
+function systemPrompt(task: TaskInput, now: string, scheduleContext: string): string {
   return [
     "You are Cadence, a calm productivity companion. You don't just advise — you act.",
     `Current time: ${now}. User's timezone: ${task.timezone}.`,
@@ -44,8 +46,19 @@ function systemPrompt(task: TaskInput, now: string): string {
     "   subtask and give a one-line reason.",
     "4. ONLY if the task clearly implies a message to someone (e.g. asking for an extension),",
     "   call draft_email once.",
-    "When you are done calling tools, reply with ONE warm, plain sentence summarizing the plan",
-    "(the user will see it). Do not list the blocks again in prose.",
+    "",
+    "Weigh what else the user already has on — don't stack heavy work on already-busy days, and",
+    "acknowledge the relevant bits in your summary:",
+    scheduleContext ? scheduleContext : "Nothing else on their plate right now.",
+    "Mind the time of day: it is currently the local time shown above. Don't place the first block",
+    "in the past or late tonight if it's already evening — start the next morning instead, and say so.",
+    "",
+    "When you're done calling tools, reply with ONE warm, plain sentence (the user will see it)",
+    "that explains the REASONING behind the schedule: reference something specific they said or how",
+    "close the deadline is, and name a judgment you made — what you front-loaded, what you kept",
+    "light, why now. Perceptive and concise, not flowery. No emoji. Don't re-list the blocks.",
+    "Register to aim for: \"Friday's close and trees are the part you flagged, so I front-loaded",
+    "those while you're fresh and kept Thursday lighter.\"",
     "",
     `Task: ${task.title}`,
     task.type ? `Type: ${task.type}` : "",
@@ -68,6 +81,7 @@ export async function proposePlan({
   task,
   credentials,
   contextSummary,
+  scheduleContext,
 }: ProposeArgs): Promise<ProposeOutput> {
   const now = new Date().toISOString();
 
@@ -81,7 +95,7 @@ export async function proposePlan({
   let resolvedDeadline: string | null = task.deadline ?? null;
 
   const contents: Content[] = [
-    { role: "user", parts: [{ text: systemPrompt(task, now) }] },
+    { role: "user", parts: [{ text: systemPrompt(task, now, scheduleContext ?? "") }] },
   ];
 
   async function dispatch(call: FunctionCall): Promise<Record<string, unknown>> {
@@ -96,6 +110,7 @@ export async function proposePlan({
           now,
           timezone: task.timezone,
           contextSummary,
+          scheduleContext,
         });
         subtasks.splice(0, subtasks.length, ...result.subtasks);
         recommendation = result.recommendation;

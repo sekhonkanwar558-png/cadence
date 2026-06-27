@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { signIn, signOut, useSession } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import CompanionBanner from "@/components/CompanionBanner";
+import ProfileMenu from "@/components/ProfileMenu";
 import TaskCard from "@/components/TaskCard";
 import TaskDetail from "@/components/TaskDetail";
 import NewTaskFlow from "@/components/NewTaskFlow";
@@ -281,12 +282,7 @@ export default function Home() {
               <span aria-hidden="true" className="text-base leading-none">📅</span>
               Calendar
             </button>
-            <span className="text-sm text-muted">
-              {session.user?.email}{" "}
-              <button onClick={() => signOut()} className="text-accent hover:underline">
-                Sign out
-              </button>
-            </span>
+            <ProfileMenu email={session.user?.email ?? ""} name={session.user?.name} />
           </div>
         )}
       </header>

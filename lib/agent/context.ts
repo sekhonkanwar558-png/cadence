@@ -1,4 +1,4 @@
-import { getUserHistory } from "@/lib/supabase/queries";
+import { getUserHistory, getPlanningSnapshot } from "@/lib/supabase/queries";
 
 /** Buckets a 24h clock into a human phrase. */
 function hourBucket(hour: number): string {
@@ -55,4 +55,76 @@ export async function buildUserContext(userId: string, timezone: string): Promis
   if (leavesReview) parts.push("often leaves 'review' steps for last");
 
   return parts.length ? `This user ${parts.join("; ")}.` : "Limited history so far.";
+}
+
+/** Short weekday label for a deadline in the user's zone, e.g. "Thu" (or "no deadline"). */
+function dayLabel(iso: string | null, timezone: string): string {
+  if (!iso) return "no deadline";
+  return new Date(iso).toLocaleDateString("en-US", { timeZone: timezone, weekday: "short" });
+}
+
+/** ISO-style YYYY-MM-DD in the user's zone, for bucketing blocks into local days. */
+function localDateKey(iso: string, timezone: string): string {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: timezone });
+}
+
+/**
+ * Layer B planning context: the user's OTHER active commitments and how loaded the
+ * next 7 days already are, so the planner can avoid stacking work on busy days and
+ * the companion can cite real constraints. Compact (<~150 tokens), degrades gracefully.
+ */
+export async function buildScheduleContext(
+  userId: string,
+  nowIso: string,
+  timezone: string,
+): Promise<string> {
+  const { activeTasks, upcomingBlocks } = await getPlanningSnapshot(userId, nowIso, 7);
+
+  // Other active commitments (cap the list so the prompt stays compact).
+  let commitments: string;
+  if (activeTasks.length === 0) {
+    commitments = "Nothing else active right now.";
+  } else {
+    const items = activeTasks
+      .slice(0, 8)
+      .map((t) => {
+        const urg = t.urgency && t.urgency !== "none" ? `, ${t.urgency}` : "";
+        return `${t.title} (due ${dayLabel(t.deadline, timezone)}${urg})`;
+      })
+      .join("; ");
+    commitments = `Also on your plate: ${items}.`;
+  }
+
+  // Confirmed-block load, bucketed by local day.
+  let load: string;
+  if (upcomingBlocks.length === 0) {
+    load = "No work blocks scheduled in the next 7 days.";
+  } else {
+    const counts = new Map<string, number>();
+    for (const b of upcomingBlocks) {
+      const key = localDateKey(b.start, timezone);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const todayKey = localDateKey(nowIso, timezone);
+    const tomorrowKey = localDateKey(
+      new Date(new Date(nowIso).getTime() + 24 * 3600000).toISOString(),
+      timezone,
+    );
+    const parts = [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, n]) => {
+        let label: string;
+        if (key === todayKey) label = "Today";
+        else if (key === tomorrowKey) label = "Tomorrow";
+        else
+          label = new Date(`${key}T12:00:00Z`).toLocaleDateString("en-US", {
+            weekday: "short",
+            timeZone: "UTC",
+          });
+        return `${label}: ${n}`;
+      });
+    load = `Scheduled load next 7 days — ${parts.join(", ")}.`;
+  }
+
+  return `${commitments} ${load}`;
 }

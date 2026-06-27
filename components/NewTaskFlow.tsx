@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import TaskComposer from "@/components/TaskComposer";
+import ClarifyPrompt from "@/components/ClarifyPrompt";
 import PlanProposal from "@/components/PlanProposal";
 import { formatTimeRange } from "@/lib/format";
-import type { ConfirmedBlock, FinalizeItem, PlanResult } from "@/lib/types";
+import type { ConfirmedBlock, FinalizeItem, PlanResult, TaskClarification } from "@/lib/types";
 
-type Phase = "idle" | "thinking" | "proposed" | "confirming" | "confirmed";
+type Phase = "idle" | "thinking" | "clarifying" | "proposed" | "confirming" | "confirmed";
 
 /** The Day-2 composer → proposal → confirm flow, now reached via "+ New task". */
 export default function NewTaskFlow({
@@ -20,26 +21,65 @@ export default function NewTaskFlow({
   const [plan, setPlan] = useState<PlanResult | null>(null);
   const [confirmed, setConfirmed] = useState<ConfirmedBlock[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Layer C: the pending vague task + the one question we asked about it.
+  const [pendingTitle, setPendingTitle] = useState("");
+  const [question, setQuestion] = useState("");
+  const [clarifyLoading, setClarifyLoading] = useState(false);
+
+  /** POST to the planner; returns the parsed body or throws with a friendly message. */
+  async function postPlan(payload: Record<string, unknown>) {
+    const res = await fetch("/api/agent/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...payload,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error ?? "Couldn't build a plan.");
+    return data as
+      | { ok: true; needsClarification: true; question: string }
+      | { ok: true; plan: PlanResult };
+  }
 
   async function submitTask(title: string) {
     setPhase("thinking");
     setError(null);
     try {
-      const res = await fetch("/api/agent/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error ?? "Couldn't build a plan.");
-      setPlan(data.plan as PlanResult);
+      const data = await postPlan({ title });
+      // Layer C: a genuinely vague task — ask ONE question before planning.
+      if ("needsClarification" in data) {
+        setPendingTitle(title);
+        setQuestion(data.question);
+        setPhase("clarifying");
+        return;
+      }
+      setPlan(data.plan);
       setPhase("proposed");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setPhase("idle");
+    }
+  }
+
+  /**
+   * Plan the pending task after the clarify step — with the user's answer, or skipping it.
+   * Either way the route plans directly (it never asks a second question).
+   */
+  async function planFromClarify(opts: { clarification?: TaskClarification; skipClarify?: boolean }) {
+    if (!pendingTitle) return;
+    setClarifyLoading(true);
+    setError(null);
+    try {
+      const data = await postPlan({ title: pendingTitle, ...opts });
+      if ("needsClarification" in data) return; // guarded server-side; defensive no-op
+      setPlan(data.plan);
+      setPhase("proposed");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setClarifyLoading(false);
     }
   }
 
@@ -114,6 +154,15 @@ export default function NewTaskFlow({
           onSubmit={submitTask}
           loading={phase === "thinking"}
           initialValue={initialValue}
+        />
+      )}
+
+      {phase === "clarifying" && (
+        <ClarifyPrompt
+          question={question}
+          loading={clarifyLoading}
+          onAnswer={(answer) => planFromClarify({ clarification: { question, answer } })}
+          onSkip={() => planFromClarify({ skipClarify: true })}
         />
       )}
 

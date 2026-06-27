@@ -47,6 +47,19 @@ export interface TaskInput {
   timezone: string;
 }
 
+/** Layer C: one round of clarification — the question asked and the user's answer. */
+export interface TaskClarification {
+  question: string;
+  answer: string;
+}
+
+/** Layer C: the plan route's response when a task is too vague to plan yet. */
+export interface ClarifyNeeded {
+  ok: true;
+  needsClarification: true;
+  question: string;
+}
+
 /** What POST /api/agent/plan returns to the UI. */
 export interface PlanResult {
   taskId: string;

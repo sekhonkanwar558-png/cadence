@@ -761,6 +761,62 @@ export async function getUserHistory(userId: string): Promise<UserHistory> {
   };
 }
 
+// ---- Layer B: planning snapshot (other commitments + schedule load) ----
+
+export interface PlanningSnapshot {
+  activeTasks: Array<{ title: string; deadline: string | null; urgency: Urgency }>;
+  upcomingBlocks: Array<{ start: string }>;
+}
+
+/**
+ * A lean snapshot for the planner (Layer B): the user's OTHER active tasks
+ * (title + deadline + urgency) and their confirmed work blocks scheduled within
+ * the next `windowDays`. Two small indexed reads — meant to run concurrently with
+ * buildUserContext, well within the Gemini loop's latency. No subtasks/drafts.
+ */
+export async function getPlanningSnapshot(
+  userId: string,
+  nowIso: string,
+  windowDays = 7,
+): Promise<PlanningSnapshot> {
+  const db = getSupabaseAdmin();
+
+  const { data: taskData, error: taskErr } = await db
+    .from("tasks")
+    .select("id, title, deadline, urgency")
+    .eq("user_id", userId)
+    .eq("status", "active");
+  if (taskErr) throw new Error(`getPlanningSnapshot tasks failed: ${taskErr.message}`);
+
+  const tasks = (taskData ?? []) as Array<{
+    id: string;
+    title: string;
+    deadline: string | null;
+    urgency: Urgency;
+  }>;
+  const activeTasks = tasks.map((t) => ({
+    title: t.title,
+    deadline: t.deadline,
+    urgency: t.urgency,
+  }));
+
+  let upcomingBlocks: Array<{ start: string }> = [];
+  if (tasks.length) {
+    const end = new Date(new Date(nowIso).getTime() + windowDays * 24 * 3600000).toISOString();
+    const { data: blockData, error: blockErr } = await db
+      .from("schedule_blocks")
+      .select("start")
+      .in("task_id", tasks.map((t) => t.id))
+      .eq("status", "confirmed")
+      .gte("start", nowIso)
+      .lt("start", end);
+    if (blockErr) throw new Error(`getPlanningSnapshot blocks failed: ${blockErr.message}`);
+    upcomingBlocks = ((blockData ?? []) as Array<{ start: string }>).map((b) => ({ start: b.start }));
+  }
+
+  return { activeTasks, upcomingBlocks };
+}
+
 // ---- Day 7: Google Calendar → Cadence sync ----
 
 export interface ImportDedupIds {

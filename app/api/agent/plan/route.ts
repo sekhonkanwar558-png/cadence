@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionContext } from "@/lib/auth-session";
 import { proposePlan } from "@/lib/agent/plan";
-import { buildUserContext } from "@/lib/agent/context";
+import { assessClarity } from "@/lib/gemini/clarify";
+import { buildUserContext, buildScheduleContext } from "@/lib/agent/context";
 import { upsertUser, insertProposedPlan } from "@/lib/supabase/queries";
-import type { PlanResult, TaskInput } from "@/lib/types";
+import type { PlanResult, TaskInput, TaskClarification } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = (await req.json().catch(() => ({}))) as Partial<TaskInput>;
+  const body = (await req.json().catch(() => ({}))) as Partial<TaskInput> & {
+    clarification?: TaskClarification;
+    skipClarify?: boolean;
+  };
   if (!body.title?.trim()) {
     return NextResponse.json(
       { ok: false, error: "Tell me what's on your plate." },
@@ -33,13 +37,42 @@ export async function POST(req: NextRequest) {
     timezone: body.timezone || "UTC",
   };
 
+  // Layer C: assess vagueness ONCE — only when the client hasn't already answered or skipped.
+  // This runs before any DB/planning work, so a vague task stays cheap until it's answered.
+  const skipAssess = body.skipClarify === true || !!body.clarification;
+
   try {
+    if (!skipAssess) {
+      let question: string | null = null;
+      try {
+        question = await assessClarity(task.title, new Date().toISOString(), task.timezone);
+      } catch (e) {
+        // A failed assessment must never block planning — proceed as if the task were clear.
+        console.warn("[plan] clarity assessment failed:", e);
+      }
+      if (question) {
+        return NextResponse.json({ ok: true, needsClarification: true, question });
+      }
+    }
+
+    // Fold a provided answer into context so decompose + the scheduling loop both see it.
+    if (body.clarification?.answer?.trim()) {
+      const { question, answer } = body.clarification;
+      task.context = [task.context, `They clarified — Q: ${question} A: ${answer.trim()}`]
+        .filter(Boolean)
+        .join("\n");
+    }
+
     const userId = await upsertUser(session.email, session.name);
-    const contextSummary = await buildUserContext(userId, task.timezone);
+    const [contextSummary, scheduleContext] = await Promise.all([
+      buildUserContext(userId, task.timezone),
+      buildScheduleContext(userId, new Date().toISOString(), task.timezone),
+    ]);
 
     const proposal = await proposePlan({
       task,
       contextSummary,
+      scheduleContext,
       credentials: {
         accessToken: session.accessToken,
         refreshToken: session.refreshToken,
