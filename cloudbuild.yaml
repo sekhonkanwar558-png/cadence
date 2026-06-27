@@ -1,0 +1,14 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '--build-arg', 'NEXT_PUBLIC_SUPABASE_URL=$_NEXT_PUBLIC_SUPABASE_URL',
+      '--build-arg', 'NEXT_PUBLIC_SUPABASE_ANON_KEY=$_NEXT_PUBLIC_SUPABASE_ANON_KEY',
+      '-t', 'gcr.io/$PROJECT_ID/cadence:$COMMIT_SHA',
+      '.'
+    ]
+images:
+  - 'gcr.io/$PROJECT_ID/cadence:$COMMIT_SHA'
+substitutions:
+  _NEXT_PUBLIC_SUPABASE_URL: ''
+  _NEXT_PUBLIC_SUPABASE_ANON_KEY: ''
