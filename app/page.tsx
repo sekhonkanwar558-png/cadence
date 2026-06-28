@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { signIn, useSession } from "next-auth/react";
 import CompanionBanner from "@/components/CompanionBanner";
 import ProfileMenu from "@/components/ProfileMenu";
+import RemindersView from "@/components/RemindersView";
 import TaskCard from "@/components/TaskCard";
 import TaskDetail from "@/components/TaskDetail";
 import NewTaskFlow from "@/components/NewTaskFlow";
 import CalendarPanel from "@/components/CalendarPanel";
 import HistoryView from "@/components/HistoryView";
-import type { DashboardTask } from "@/lib/types";
+import type { DashboardTask, Reminder } from "@/lib/types";
 
 type Mode = "dashboard" | "new-task" | "history";
 
@@ -63,6 +64,7 @@ const CAPABILITIES = [
 export default function Home() {
   const { data: session, status } = useSession();
   const [mode, setMode] = useState<Mode>("dashboard");
+  const [board, setBoard] = useState<"tasks" | "reminders">("tasks");
   const [tasks, setTasks] = useState<DashboardTask[]>([]);
   const [companion, setCompanion] = useState(CALM);
   const [loading, setLoading] = useState(true);
@@ -120,6 +122,16 @@ export default function Home() {
   function startWith(seed: string) {
     setComposerSeed(seed);
     setMode("new-task");
+  }
+
+  /**
+   * The "Plan it" bridge: promote a pure-deadline reminder into the full task planner.
+   * Acknowledge it (a recurring one rolls forward) — fire-and-forget since we navigate
+   * away to the planner; the reminders tab re-fetches when the user returns.
+   */
+  function planFromReminder(reminder: Reminder) {
+    fetch(`/api/reminders/${reminder.id}/acknowledge`, { method: "POST" }).catch(() => {});
+    startWith(reminder.title);
   }
 
   async function checkDeadlines() {
@@ -347,6 +359,29 @@ export default function Home() {
 
       {status === "authenticated" && mode === "dashboard" && (
         <section className="flex flex-col gap-8">
+          <div className="flex w-fit items-center gap-1 rounded-xl border border-border bg-surface p-1">
+            <button
+              onClick={() => setBoard("tasks")}
+              className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                board === "tasks" ? "bg-accent/10 text-text" : "text-muted hover:text-text"
+              }`}
+            >
+              Tasks
+            </button>
+            <button
+              onClick={() => setBoard("reminders")}
+              className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                board === "reminders" ? "bg-accent/10 text-text" : "text-muted hover:text-text"
+              }`}
+            >
+              Reminders
+            </button>
+          </div>
+
+          {board === "reminders" ? (
+            <RemindersView onPlan={planFromReminder} />
+          ) : (
+            <>
           <CompanionBanner message={companion} />
 
           <div className="flex flex-col gap-2">
@@ -447,6 +482,8 @@ export default function Home() {
                 </li>
               ))}
             </ul>
+          )}
+            </>
           )}
         </section>
       )}

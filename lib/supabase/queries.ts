@@ -8,6 +8,10 @@ import type {
   DraftStatus,
   ProposedBlock,
   ProposedEmail,
+  Reminder,
+  ReminderRecurrence,
+  ReminderStakes,
+  ReminderStatus,
   Subtask,
   TaskInput,
   TaskStatus,
@@ -935,4 +939,121 @@ export async function getCalendarSyncedAt(userId: string): Promise<string | null
     .single();
   if (error) throw new Error(`getCalendarSyncedAt failed: ${error.message}`);
   return (data as { calendar_synced_at: string | null }).calendar_synced_at;
+}
+
+// ---- Reminders (pure deadlines — separate from tasks) ----
+
+const REMINDER_COLS = "id, title, deadline, stakes, status, snoozed_until, recurrence, created_at";
+
+export interface InsertReminderArgs {
+  userId: string;
+  title: string;
+  deadline: string;
+  stakes: ReminderStakes;
+  recurrence?: ReminderRecurrence | null;
+}
+
+/** Insert a reminder. No subtasks/blocks — a pure deadline row. */
+export async function insertReminder(args: InsertReminderArgs): Promise<Reminder> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("reminders")
+    .insert({
+      user_id: args.userId,
+      title: args.title,
+      deadline: args.deadline,
+      stakes: args.stakes,
+      recurrence: args.recurrence ?? null,
+      status: "active",
+    })
+    .select(REMINDER_COLS)
+    .single();
+  if (error || !data) throw new Error(`insertReminder failed: ${error?.message ?? "no row"}`);
+  return data as Reminder;
+}
+
+/** A user's live reminders (active + snoozed), soonest deadline first. */
+export async function listReminders(userId: string): Promise<Reminder[]> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("reminders")
+    .select(REMINDER_COLS)
+    .eq("user_id", userId)
+    .in("status", ["active", "snoozed"])
+    .order("deadline", { ascending: true });
+  if (error) throw new Error(`listReminders failed: ${error.message}`);
+  return (data ?? []) as Reminder[];
+}
+
+/** Set a reminder's status (acknowledge/snooze), scoped to its owner. Throws if not found. */
+export async function setReminderStatus(
+  reminderId: string,
+  userId: string,
+  patch: { status: ReminderStatus; snoozed_until?: string | null },
+): Promise<void> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("reminders")
+    .update({ status: patch.status, snoozed_until: patch.snoozed_until ?? null })
+    .eq("id", reminderId)
+    .eq("user_id", userId)
+    .select("id")
+    .single();
+  if (error || !data) throw new Error("Reminder not found.");
+}
+
+/** The next occurrence of a recurring deadline, strictly in the future. */
+function nextOccurrence(deadlineIso: string, recurrence: ReminderRecurrence): string {
+  const d = new Date(deadlineIso);
+  const now = Date.now();
+  const step = () => {
+    if (recurrence === "daily") d.setDate(d.getDate() + 1);
+    else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
+    else d.setMonth(d.getMonth() + 1);
+  };
+  let guard = 0;
+  do {
+    step();
+    guard += 1;
+  } while (d.getTime() <= now && guard < 1000);
+  return d.toISOString();
+}
+
+/**
+ * Acknowledge a reminder, scoped to its owner. A one-off becomes 'acknowledged';
+ * a recurring one ROLLS FORWARD — its deadline advances to the next occurrence,
+ * status returns to 'active', and its escalation ledger is cleared so the new cycle
+ * can nudge again. Returns the new deadline when it rolled, else null.
+ */
+export async function acknowledgeReminder(
+  reminderId: string,
+  userId: string,
+): Promise<{ rolledTo: string | null }> {
+  const db = getSupabaseAdmin();
+
+  const { data, error } = await db
+    .from("reminders")
+    .select("deadline, recurrence")
+    .eq("id", reminderId)
+    .eq("user_id", userId)
+    .single();
+  if (error || !data) throw new Error("Reminder not found.");
+  const row = data as { deadline: string; recurrence: ReminderRecurrence | null };
+
+  if (!row.recurrence) {
+    await setReminderStatus(reminderId, userId, { status: "acknowledged" });
+    return { rolledTo: null };
+  }
+
+  const next = nextOccurrence(row.deadline, row.recurrence);
+  const { error: updErr } = await db
+    .from("reminders")
+    .update({ deadline: next, status: "active", snoozed_until: null })
+    .eq("id", reminderId)
+    .eq("user_id", userId);
+  if (updErr) throw new Error(`acknowledgeReminder roll-forward failed: ${updErr.message}`);
+
+  // Clear the escalation ledger so the next cycle can re-fire its tiers.
+  await db.from("reminder_escalations").delete().eq("reminder_id", reminderId);
+  return { rolledTo: next };
 }

@@ -1,5 +1,7 @@
 // Shared domain types for Cadence (typed end to end, per §12 — no `any`).
 
+import type { ReminderStakes, ReminderStatus } from "@/lib/reminders/urgency";
+
 export type TaskStatus = "proposed" | "active" | "completed" | "done" | "cancelled";
 export type BlockStatus = "proposed" | "confirmed" | "done" | "cancelled";
 export type DraftStatus = "draft" | "confirmed" | "sent";
@@ -156,4 +158,23 @@ export interface DashboardPayload {
   ok: true;
   tasks: DashboardTask[];
   companionMessage: string;
+}
+
+// ---- Reminders (flagship "last-minute life saver") ----
+
+export type { ReminderStakes, ReminderStatus, ReminderTier } from "@/lib/reminders/urgency";
+
+/** How often a reminder repeats; null = a one-off. */
+export type ReminderRecurrence = "daily" | "weekly" | "monthly";
+
+/** A reminder row — a pure deadline, no subtasks/blocks/decomposition. */
+export interface Reminder {
+  id: string;
+  title: string;
+  deadline: string;
+  stakes: ReminderStakes;
+  status: ReminderStatus;
+  snoozed_until: string | null;
+  recurrence: ReminderRecurrence | null;
+  created_at: string;
 }
