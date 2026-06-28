@@ -83,7 +83,6 @@ export default function Home() {
   // When a reminder is promoted via "Plan it", hold its id and only acknowledge it once
   // the task plan is actually confirmed (not on click) — so backing out leaves it intact.
   const [planningReminderId, setPlanningReminderId] = useState<string | null>(null);
-  const [rescheduling, setRescheduling] = useState(false);
   const [replanning, setReplanning] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [completionPromptId, setCompletionPromptId] = useState<string | null>(null);
@@ -227,24 +226,6 @@ export default function Home() {
       if (data.ok) setHistoryTasks(data.tasks);
     } finally {
       setHistoryLoading(false);
-    }
-  }
-
-  async function reschedule() {
-    if (!selectedId) return;
-    setRescheduling(true);
-    setRescheduleError(null);
-    try {
-      const res = await fetch(`/api/tasks/${selectedId}/reschedule`, { method: "POST" });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error ?? "Couldn't reschedule.");
-      const tRes = await fetch("/api/tasks");
-      const tData = await tRes.json();
-      if (tData.ok) applyPayload(tData);
-    } catch (e) {
-      setRescheduleError(e instanceof Error ? e.message : "Couldn't reschedule.");
-    } finally {
-      setRescheduling(false);
     }
   }
 
@@ -518,8 +499,6 @@ export default function Home() {
             setSelectedId(null);
             setRescheduleError(null);
           }}
-          onReschedule={reschedule}
-          rescheduling={rescheduling}
           onReplan={replanTask}
           replanning={replanning}
           rescheduleError={rescheduleError}

@@ -4,13 +4,13 @@ import { useEffect, useState } from "react";
 import type { DashboardTask } from "@/lib/types";
 import { URGENCY_STYLE } from "@/lib/urgency";
 import { formatRelativeDeadline, formatDayHeading, formatTimeRange } from "@/lib/format";
+import { useVoiceInput } from "@/components/useVoiceInput";
+import MicButton from "@/components/MicButton";
 import EmailDraftCard from "@/components/EmailDraftCard";
 
 interface Props {
   task: DashboardTask;
   onClose: () => void;
-  onReschedule: () => void;
-  rescheduling: boolean;
   /** Re-plan this active task from a plain-language instruction; resolves with a note. */
   onReplan: (instruction: string) => Promise<{ note: string }>;
   replanning: boolean;
@@ -21,8 +21,6 @@ interface Props {
 export default function TaskDetail({
   task,
   onClose,
-  onReschedule,
-  rescheduling,
   onReplan,
   replanning,
   rescheduleError,
@@ -38,7 +36,12 @@ export default function TaskDetail({
   const [note, setNote] = useState<{ text: string; id: number } | null>(null);
   const [noteShown, setNoteShown] = useState(false);
 
-  const busy = rescheduling || replanning;
+  const busy = replanning;
+
+  // Voice for the conversational adjust — appends transcription to the instruction.
+  const voice = useVoiceInput((text) =>
+    setInstruction((v) => (v.trim() ? `${v.trim()} ${text}` : text)),
+  );
 
   async function submitReplan() {
     const text = instruction.trim();
@@ -201,13 +204,13 @@ export default function TaskDetail({
           </section>
         )}
 
-        {/* Re-plan in plain language — the companion reshapes the remaining work for you (§4) */}
+        {/* Adjust the plan in plain language — routes through the Layer 3 replan (§4) */}
         {incompleteCount > 0 && (
           <section className="mt-6">
             <h3 className="text-sm font-medium uppercase tracking-wide text-muted">
-              Tell me what to change
+              Tell Cadence to adjust this
             </h3>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="mt-3 flex items-center gap-2">
               <input
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
@@ -222,6 +225,7 @@ export default function TaskDetail({
                 disabled={busy}
                 className="flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30 disabled:opacity-50"
               />
+              <MicButton state={voice.state} onStart={voice.start} onStop={voice.stop} />
               <button
                 type="button"
                 onClick={submitReplan}
@@ -232,6 +236,7 @@ export default function TaskDetail({
                 {replanning ? "Thinking…" : "Revise"}
               </button>
             </div>
+            {voice.error && <p className="mt-2 text-sm text-muted">{voice.error}</p>}
           </section>
         )}
 
@@ -253,15 +258,6 @@ export default function TaskDetail({
 
         {/* Actions */}
         <div className="mt-8 flex items-center gap-4">
-          {incompleteCount > 0 && (
-            <button
-              onClick={onReschedule}
-              disabled={busy}
-              className="rounded-xl bg-accent px-4 py-2 font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {rescheduling ? "Finding you a slot…" : "Reschedule remaining work"}
-            </button>
-          )}
           <button
             onClick={onClose}
             disabled={busy}
