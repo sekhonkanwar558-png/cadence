@@ -235,6 +235,55 @@ export async function markBlockCancelled(blockId: string): Promise<void> {
   if (error) throw new Error(`cancel block failed: ${error.message}`);
 }
 
+/**
+ * Load a confirmed block (scoped to its owner) so it can be retimed: since there's no
+ * Calendar "update" API, the retime route deletes the old event and recreates it at the
+ * new time. Throws "Block not found." if the id doesn't exist or isn't the user's.
+ */
+export async function getBlockForRetime(
+  blockId: string,
+  userId: string,
+): Promise<{
+  id: string;
+  taskId: string;
+  title: string | null;
+  gcalEventId: string | null;
+  subtaskId: string | null;
+}> {
+  const db = getSupabaseAdmin();
+
+  const { data: block, error: blockErr } = await db
+    .from("schedule_blocks")
+    .select("id, task_id, title, gcal_event_id, subtask_id")
+    .eq("id", blockId)
+    .single();
+  if (blockErr || !block) throw new Error("Block not found.");
+
+  const b = block as {
+    id: string;
+    task_id: string;
+    title: string | null;
+    gcal_event_id: string | null;
+    subtask_id: string | null;
+  };
+
+  const { data: task, error: taskErr } = await db
+    .from("tasks")
+    .select("id")
+    .eq("id", b.task_id)
+    .eq("user_id", userId)
+    .single();
+  if (taskErr || !task) throw new Error("Block not found.");
+
+  return {
+    id: b.id,
+    taskId: b.task_id,
+    title: b.title,
+    gcalEventId: b.gcal_event_id,
+    subtaskId: b.subtask_id,
+  };
+}
+
 // ---- Day 3: dashboard, demo seed, reschedule ----
 
 interface TaskRowFull {
@@ -399,6 +448,38 @@ export async function setSubtaskDone(
     })
     .eq("id", subtaskId);
   if (updErr) throw new Error(`update subtask failed: ${updErr.message}`);
+}
+
+/** Rename a subtask (slice 3 inline edit). Scoped to the owner via its parent task. */
+export async function setSubtaskTitle(
+  subtaskId: string,
+  userId: string,
+  title: string,
+): Promise<void> {
+  const clean = title.trim();
+  if (!clean) throw new Error("A step needs a name.");
+  const db = getSupabaseAdmin();
+
+  const { data: sub, error: subErr } = await db
+    .from("subtasks")
+    .select("id, task_id")
+    .eq("id", subtaskId)
+    .single();
+  if (subErr || !sub) throw new Error("Subtask not found.");
+
+  const { data: task, error: taskErr } = await db
+    .from("tasks")
+    .select("id")
+    .eq("id", (sub as { task_id: string }).task_id)
+    .eq("user_id", userId)
+    .single();
+  if (taskErr || !task) throw new Error("Subtask not found.");
+
+  const { error: updErr } = await db
+    .from("subtasks")
+    .update({ title: clean })
+    .eq("id", subtaskId);
+  if (updErr) throw new Error(`rename subtask failed: ${updErr.message}`);
 }
 
 interface DemoTaskSeed {

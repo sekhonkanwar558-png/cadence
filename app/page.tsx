@@ -262,6 +262,34 @@ export default function Home() {
     }
   }
 
+  /** Slice 3 — rename a single subtask inline; the route returns the refreshed board. */
+  async function renameSubtask(subtaskId: string, title: string) {
+    const res = await fetch(`/api/subtasks/${subtaskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error ?? "Couldn't rename that step.");
+    applyPayload(data);
+  }
+
+  /** Slice 3 — retime a single scheduled block (moves its Google Calendar event too). */
+  async function retimeBlock(blockId: string, start: string, end: string) {
+    const res = await fetch(`/api/blocks/${blockId}/retime`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start: `${start}:00`,
+        end: `${end}:00`,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error ?? "Couldn't move that block.");
+    applyPayload(data);
+  }
+
   const selected = tasks.find((t) => t.id === selectedId) ?? null;
 
   return (
@@ -503,6 +531,8 @@ export default function Home() {
           replanning={replanning}
           rescheduleError={rescheduleError}
           onToggleSubtask={toggleSubtask}
+          onRename={renameSubtask}
+          onRetime={retimeBlock}
         />
       )}
 
