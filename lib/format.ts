@@ -39,6 +39,27 @@ export function datetimeLocalAddMinutes(value: string, minutes: number): string 
   return `${end.getFullYear()}-${pad2(end.getMonth() + 1)}-${pad2(end.getDate())}T${pad2(end.getHours())}:${pad2(end.getMinutes())}`;
 }
 
+/**
+ * "Today at 2:00 PM", "Tomorrow at 9:00 AM", "Friday, 29 Jun at 3:00 PM" — a clear,
+ * human-readable deadline for the reminder confirm step. Renders in the browser's local
+ * zone; composes the day/month part explicitly so it reads "29 Jun" (day before month).
+ */
+export function formatDeadlineHuman(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  const now = new Date();
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const dayDiff = Math.round((startOfDay(d).getTime() - startOfDay(now).getTime()) / 86400000);
+  if (dayDiff === 0) return `Today at ${time}`;
+  if (dayDiff === 1) return `Tomorrow at ${time}`;
+
+  const weekday = d.toLocaleDateString(undefined, { weekday: "long" });
+  const month = d.toLocaleDateString(undefined, { month: "short" });
+  return `${weekday}, ${d.getDate()} ${month} at ${time}`;
+}
+
 /** "in 6 hr", "in 2 days", "40 min ago" — calm relative deadline for task cards. */
 export function formatRelativeDeadline(iso: string | null): string {
   if (!iso) return "no deadline";

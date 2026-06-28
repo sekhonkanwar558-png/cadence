@@ -3,10 +3,12 @@
 import { useState, type FormEvent } from "react";
 import { useSession } from "next-auth/react";
 import { useVoiceInput, type VoiceState } from "@/components/useVoiceInput";
+import { formatDeadlineHuman, isoToDatetimeLocal } from "@/lib/format";
 import type { ReminderRecurrence, ReminderStakes } from "@/lib/types";
 
 type StakesChoice = "auto" | ReminderStakes;
 type RecurrenceChoice = "none" | ReminderRecurrence;
+type Stage = "capture" | "confirm";
 
 const STAKES_OPTIONS: { value: StakesChoice; label: string }[] = [
   { value: "auto", label: "Auto" },
@@ -14,6 +16,11 @@ const STAKES_OPTIONS: { value: StakesChoice; label: string }[] = [
   { value: "medium", label: "Important" },
   { value: "critical", label: "Critical" },
 ];
+
+// Stage 2 has no "Auto" — by then Cadence has already inferred a concrete stakes.
+const CONFIRM_STAKES_OPTIONS = STAKES_OPTIONS.filter(
+  (o): o is { value: ReminderStakes; label: string } => o.value !== "auto",
+);
 
 const RECURRENCE_OPTIONS: { value: RecurrenceChoice; label: string }[] = [
   { value: "none", label: "One-off" },
@@ -25,17 +32,38 @@ const RECURRENCE_OPTIONS: { value: RecurrenceChoice; label: string }[] = [
 const INPUT =
   "rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none transition-colors focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
+const STAKES_PILL = (active: boolean) =>
+  `rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${
+    active
+      ? "border-accent/40 bg-accent/10 text-text"
+      : "border-border text-muted hover:border-accent/40"
+  }`;
+
 interface Props {
   onCreated: () => void;
 }
 
-/** Add a reminder — type or speak it; Cadence infers the date + stakes (smart capture). */
+/**
+ * Add a reminder in two calm stages: CAPTURE (type or speak it) → CONFIRM (review what
+ * Cadence understood, then save). The manual date picker only appears in the confirm
+ * step, so natural language and a picker never fight over the same value.
+ */
 export default function ReminderComposer({ onCreated }: Props) {
   const { status } = useSession();
+  const [stage, setStage] = useState<Stage>("capture");
+
+  // Stage 1 — capture
   const [title, setTitle] = useState("");
   const [stakes, setStakes] = useState<StakesChoice>("auto");
   const [recurrence, setRecurrence] = useState<RecurrenceChoice>("none");
-  const [deadline, setDeadline] = useState(""); // datetime-local; blank = inferred
+  const [parsing, setParsing] = useState(false);
+
+  // Stage 2 — confirm (inferred values, all editable)
+  const [cTitle, setCTitle] = useState("");
+  const [cDeadlineLocal, setCDeadlineLocal] = useState(""); // datetime-local; "" = none inferred
+  const [cStakes, setCStakes] = useState<ReminderStakes>("medium");
+  const [showAdjust, setShowAdjust] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,10 +71,52 @@ export default function ReminderComposer({ onCreated }: Props) {
     setTitle((v) => (v.trim() ? `${v.trim()} ${text}` : text)),
   );
 
-  async function submit(e: FormEvent) {
+  const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  function reset() {
+    setTitle("");
+    setStakes("auto");
+    setRecurrence("none");
+    setCTitle("");
+    setCDeadlineLocal("");
+    setCStakes("medium");
+    setShowAdjust(false);
+    setError(null);
+    setStage("capture");
+  }
+
+  // Stage 1 → run smart capture, then show the confirm step.
+  async function capture(e: FormEvent) {
     e.preventDefault();
     const t = title.trim();
-    if (!t || saving) return;
+    if (!t || parsing) return;
+    setParsing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/reminders/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: t, timezone: timezone() }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error ?? "Couldn't read that. Try again?");
+      setCTitle(typeof data.title === "string" && data.title.trim() ? data.title.trim() : t);
+      const local = data.deadline ? isoToDatetimeLocal(data.deadline) : "";
+      setCDeadlineLocal(local);
+      setShowAdjust(!local); // no deadline inferred → reveal the picker so they can set one
+      setCStakes(stakes === "auto" ? (data.stakes as ReminderStakes) ?? "medium" : stakes);
+      setStage("confirm");
+    } catch (e2) {
+      setError(e2 instanceof Error ? e2.message : "Something went wrong.");
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  // Stage 2 → save the confirmed reminder.
+  async function confirm(e: FormEvent) {
+    e.preventDefault();
+    if (!cTitle.trim() || !cDeadlineLocal || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -54,19 +124,16 @@ export default function ReminderComposer({ onCreated }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: t,
-          stakes: stakes === "auto" ? undefined : stakes,
+          title: cTitle.trim(),
+          deadline: `${cDeadlineLocal}:00`,
+          stakes: cStakes,
           recurrence: recurrence === "none" ? undefined : recurrence,
-          deadline: deadline ? `${deadline}:00` : undefined,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezone: timezone(),
         }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error ?? "Couldn't save that reminder.");
-      setTitle("");
-      setDeadline("");
-      setStakes("auto");
-      setRecurrence("none");
+      reset();
       onCreated();
     } catch (e2) {
       setError(e2 instanceof Error ? e2.message : "Something went wrong.");
@@ -75,13 +142,109 @@ export default function ReminderComposer({ onCreated }: Props) {
     }
   }
 
+  if (stage === "confirm") {
+    const repeatLabel =
+      recurrence !== "none"
+        ? RECURRENCE_OPTIONS.find((o) => o.value === recurrence)?.label
+        : null;
+
+    return (
+      <form
+        onSubmit={confirm}
+        className="flex flex-col gap-4 rounded-xl border border-border bg-surface px-4 py-4"
+      >
+        <p className="voice text-lg">Here&apos;s what I caught</p>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-muted">Reminder</span>
+          <input
+            value={cTitle}
+            onChange={(e) => setCTitle(e.target.value)}
+            aria-label="Reminder"
+            className={INPUT}
+          />
+        </label>
+
+        <div className="flex flex-col gap-1">
+          {cDeadlineLocal ? (
+            <>
+              <span className="text-xs text-muted">Due</span>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm text-text">{formatDeadlineHuman(cDeadlineLocal)}</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAdjust((v) => !v)}
+                  className="text-sm text-accent transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                >
+                  {showAdjust ? "Done" : "Adjust time"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <span className="text-sm text-text">When is this due?</span>
+          )}
+          {(showAdjust || !cDeadlineLocal) && (
+            <input
+              type="datetime-local"
+              value={cDeadlineLocal}
+              onChange={(e) => setCDeadlineLocal(e.target.value)}
+              aria-label="Deadline"
+              className={`mt-1 w-fit ${INPUT}`}
+            />
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-muted">Stakes</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {CONFIRM_STAKES_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setCStakes(o.value)}
+                aria-pressed={cStakes === o.value}
+                className={STAKES_PILL(cStakes === o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {repeatLabel && <p className="text-xs text-muted">Repeats {repeatLabel.toLowerCase()}.</p>}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="submit"
+            disabled={saving || !cTitle.trim() || !cDeadlineLocal}
+            className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {saving ? "Saving…" : "Set reminder"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setStage("capture");
+            }}
+            className="rounded-xl border border-border bg-surface px-5 py-2.5 text-sm transition-colors hover:border-accent/40"
+          >
+            Edit
+          </button>
+        </div>
+
+        {error && <p className="text-sm text-overdue">{error}</p>}
+      </form>
+    );
+  }
+
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-4">
+    <form onSubmit={capture} className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-4">
       <div className="flex items-center gap-2">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Remind me to… (e.g. electricity bill due Friday)"
+          placeholder="Remind me to…"
           aria-label="Reminder"
           className={`flex-1 ${INPUT}`}
         />
@@ -98,11 +261,7 @@ export default function ReminderComposer({ onCreated }: Props) {
             type="button"
             onClick={() => setStakes(o.value)}
             aria-pressed={stakes === o.value}
-            className={`rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${
-              stakes === o.value
-                ? "border-accent/40 bg-accent/10 text-text"
-                : "border-border text-muted hover:border-accent/40"
-            }`}
+            className={STAKES_PILL(stakes === o.value)}
           >
             {o.label}
           </button>
@@ -110,44 +269,33 @@ export default function ReminderComposer({ onCreated }: Props) {
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
-          <label className="flex items-center gap-2">
-            <span>Due</span>
-            <input
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              aria-label="Deadline (optional — blank lets Cadence infer it)"
-              className={INPUT}
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            <span>Repeat</span>
-            <select
-              value={recurrence}
-              onChange={(e) => setRecurrence(e.target.value as RecurrenceChoice)}
-              aria-label="Recurrence"
-              className={INPUT}
-            >
-              {RECURRENCE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <label className="flex items-center gap-2 text-sm text-muted">
+          <span>Repeat</span>
+          <select
+            value={recurrence}
+            onChange={(e) => setRecurrence(e.target.value as RecurrenceChoice)}
+            aria-label="Recurrence"
+            className={INPUT}
+          >
+            {RECURRENCE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="submit"
-          disabled={saving || !title.trim()}
+          disabled={parsing || !title.trim()}
           className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {saving ? "Saving…" : "Add reminder"}
+          {parsing ? "Reading…" : "Add reminder"}
         </button>
       </div>
 
       <p className="text-xs text-muted">
-        Just type or speak it — I&apos;ll infer the date and how much it matters. Override anything above.
+        Just type or speak it — include the date and time (&ldquo;pay bill today at 2pm&rdquo;,
+        &ldquo;call dentist Friday 3pm&rdquo;).
       </p>
       {error && <p className="text-sm text-overdue">{error}</p>}
     </form>

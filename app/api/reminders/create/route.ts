@@ -2,12 +2,24 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSessionContext } from "@/lib/auth-session";
 import { upsertUser, insertReminder } from "@/lib/supabase/queries";
 import { parseReminder } from "@/lib/gemini/parseReminder";
+import { wallClockToInstantIso } from "@/lib/time";
 import type { ReminderRecurrence, ReminderStakes } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const STAKES: ReadonlySet<string> = new Set(["low", "medium", "critical"]);
 const RECURRENCE: ReadonlySet<string> = new Set(["daily", "weekly", "monthly"]);
+
+/**
+ * Normalize a deadline to a true UTC instant. A value that already carries a zone
+ * (smart-capture returns ISO with the user's offset) is trusted as-is; a naive
+ * wall-clock string from the confirm step's <input type="datetime-local"> is resolved
+ * against the user's timezone — the same helper the task planner uses.
+ */
+function toInstantIso(value: string, timezone: string): string {
+  const hasZone = /[zZ]$|[+-]\d\d:\d\d$/.test(value);
+  return hasZone ? new Date(value).toISOString() : wallClockToInstantIso(value, timezone);
+}
 
 /**
  * Create a reminder — a PURE deadline. Deliberately bypasses the decompose/plan
@@ -72,7 +84,7 @@ export async function POST(req: NextRequest) {
     const reminder = await insertReminder({
       userId,
       title,
-      deadline,
+      deadline: toInstantIso(deadline, timezone),
       stakes: stakes ?? "medium",
       recurrence,
     });
