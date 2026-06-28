@@ -133,14 +133,22 @@ export default function TaskDetail({
                       aria-label={done ? `Mark "${s.title}" not done` : `Mark "${s.title}" done`}
                       className="flex w-full items-center gap-3 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-bg disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
                     >
-                      <span
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
-                          done ? "border-accent bg-accent text-white" : "border-border"
-                        }`}
-                      >
-                        {done && <CheckIcon />}
+                      <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                        <span
+                          className={`flex h-4 w-4 items-center justify-center rounded-full border transition-colors ${
+                            done ? "border-accent bg-accent text-white" : "border-border"
+                          }`}
+                        >
+                          <CheckIcon done={done} />
+                        </span>
+                        {done && (
+                          <span
+                            aria-hidden="true"
+                            className="cadence-pulse pointer-events-none absolute inset-0 rounded-full bg-accent/30"
+                          />
+                        )}
                       </span>
-                      <span className={done ? "text-muted line-through" : "text-text"}>
+                      <span className={`strike ${done ? "strike-done text-muted" : "text-text"}`}>
                         {s.title}
                       </span>
                     </button>
@@ -267,7 +275,7 @@ export default function TaskDetail({
   );
 }
 
-function CheckIcon() {
+function CheckIcon({ done }: { done: boolean }) {
   return (
     <svg
       width="11"
@@ -280,7 +288,11 @@ function CheckIcon() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <polyline points="20 6 9 17 4 12" />
+      <polyline
+        points="20 6 9 17 4 12"
+        pathLength={1}
+        className={`check-draw ${done ? "check-draw-done" : ""}`}
+      />
     </svg>
   );
 }

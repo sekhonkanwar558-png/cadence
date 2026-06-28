@@ -50,6 +50,44 @@ body {
   animation: cadence-fade-in 300ms ease-out both;
 }
 
+/* Subtask completion — a calm, crafted "done" moment (not a pop, never confetti). */
+@keyframes cadence-pulse {
+  from {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+.cadence-pulse {
+  animation: cadence-pulse 480ms ease-out both;
+}
+
+/* The checkmark draws itself in (and back out when un-ticked). */
+.check-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 320ms ease-out;
+}
+
+.check-draw-done {
+  stroke-dashoffset: 0;
+}
+
+/* A strike-through that eases in by fading its colour, rather than snapping. */
+.strike {
+  text-decoration-line: line-through;
+  text-decoration-color: transparent;
+  transition: color 300ms ease-out, text-decoration-color 300ms ease-out;
+}
+
+.strike-done {
+  text-decoration-color: var(--color-muted);
+}
+
 /* Quality floor (§11): respect reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   *,
