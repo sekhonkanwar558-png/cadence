@@ -12,9 +12,12 @@ type Phase = "idle" | "thinking" | "clarifying" | "proposed" | "confirming" | "c
 /** The Day-2 composer → proposal → confirm flow, now reached via "+ New task". */
 export default function NewTaskFlow({
   onClose,
+  onConfirmed,
   initialValue,
 }: {
   onClose: () => void;
+  /** Fires once the plan is successfully confirmed (used to acknowledge a source reminder). */
+  onConfirmed?: () => void;
   initialValue?: string;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -131,6 +134,7 @@ export default function NewTaskFlow({
       if (!data.ok) throw new Error(data.error ?? "Couldn't confirm the plan.");
       setConfirmed(data.blocks as ConfirmedBlock[]);
       setPhase("confirmed");
+      onConfirmed?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't reach your calendar.");
       setPhase("proposed");

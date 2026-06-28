@@ -41,6 +41,10 @@ export default function ReminderCard({ reminder, onAcknowledge, onSnooze, onPlan
   });
   const badge = URGENCY_STYLE[urgency.tier];
   const stakes = STAKES_META[reminder.stakes];
+  // Only offer the prominent, permanent "Mark done" when the reminder actually needs
+  // attention (critical absorbs overdue). Calm/early ones get a quiet "Dismiss" instead,
+  // so they're harder to clear by accident.
+  const urgent = urgency.tier === "action-needed" || urgency.tier === "critical";
 
   function snoozePreset(hours: number) {
     onSnooze(reminder.id, new Date(Date.now() + hours * 3600000).toISOString());
@@ -72,14 +76,25 @@ export default function ReminderCard({ reminder, onAcknowledge, onSnooze, onPlan
       </div>
 
       <div className="flex flex-wrap items-center gap-4 border-t border-border pt-3">
-        <button
-          type="button"
-          onClick={() => onAcknowledge(reminder.id)}
-          disabled={busy}
-          className="rounded-xl bg-accent px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Got it
-        </button>
+        {urgent ? (
+          <button
+            type="button"
+            onClick={() => onAcknowledge(reminder.id)}
+            disabled={busy}
+            className="rounded-xl bg-accent px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Mark done
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onAcknowledge(reminder.id)}
+            disabled={busy}
+            className="text-sm text-muted transition-colors hover:text-text disabled:opacity-40"
+          >
+            Dismiss
+          </button>
+        )}
 
         <button
           type="button"

@@ -80,6 +80,9 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // When a reminder is promoted via "Plan it", hold its id and only acknowledge it once
+  // the task plan is actually confirmed (not on click) — so backing out leaves it intact.
+  const [planningReminderId, setPlanningReminderId] = useState<string | null>(null);
   const [rescheduling, setRescheduling] = useState(false);
   const [replanning, setReplanning] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
@@ -131,11 +134,12 @@ export default function Home() {
 
   /**
    * The "Plan it" bridge: promote a pure-deadline reminder into the full task planner.
-   * Acknowledge it (a recurring one rolls forward) — fire-and-forget since we navigate
-   * away to the planner; the reminders tab re-fetches when the user returns.
+   * We DON'T acknowledge here — only after the plan is confirmed (see NewTaskFlow's
+   * onConfirmed below). If the user opens the planner and backs out, the reminder stays
+   * exactly as it was.
    */
   function planFromReminder(reminder: Reminder) {
-    fetch(`/api/reminders/${reminder.id}/acknowledge`, { method: "POST" }).catch(() => {});
+    setPlanningReminderId(reminder.id);
     startWith(reminder.title);
   }
 
@@ -346,8 +350,18 @@ export default function Home() {
       {status === "authenticated" && mode === "new-task" && (
         <NewTaskFlow
           initialValue={composerSeed}
+          onConfirmed={() => {
+            // The plan is now real — acknowledge the source reminder (a recurring one
+            // rolls forward). Fire-and-forget; the reminders tab re-fetches on return.
+            if (planningReminderId) {
+              fetch(`/api/reminders/${planningReminderId}/acknowledge`, { method: "POST" }).catch(
+                () => {},
+              );
+            }
+          }}
           onClose={() => {
             setComposerSeed("");
+            setPlanningReminderId(null);
             setMode("dashboard");
             fetchTasks();
           }}

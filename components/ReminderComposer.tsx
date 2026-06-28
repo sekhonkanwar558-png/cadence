@@ -29,6 +29,34 @@ const RECURRENCE_OPTIONS: { value: RecurrenceChoice; label: string }[] = [
   { value: "monthly", label: "Monthly" },
 ];
 
+/**
+ * Catch recurrence/deadline mismatches before they surprise the user — e.g. a "monthly"
+ * reminder due today (it rolls a month out the moment it's marked done), or a "daily" one
+ * whose first occurrence is over a week away. Returns a gentle, non-blocking note or null.
+ */
+function recurrenceWarning(deadlineLocal: string, recurrence: RecurrenceChoice): string | null {
+  if (!deadlineLocal || recurrence === "none") return null;
+  const d = new Date(deadlineLocal); // datetime-local parses as local time
+  if (Number.isNaN(d.getTime())) return null;
+
+  const now = new Date();
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const dayDiff = Math.round((startOfDay(d).getTime() - startOfDay(now).getTime()) / 86400000);
+  const hoursAway = (d.getTime() - now.getTime()) / 3600000;
+
+  if (recurrence === "monthly" && (dayDiff === 0 || (hoursAway > 0 && hoursAway <= 24))) {
+    const due = dayDiff === 0 ? "today" : "within a day";
+    return `Heads up — this repeats monthly but is due ${due}. After you mark it done it'll roll to next month. Is that right?`;
+  }
+  if (recurrence === "weekly" && dayDiff === 0) {
+    return "Heads up — this repeats weekly but is due today. After you mark it done it'll roll to next week. Is that right?";
+  }
+  if (recurrence === "daily" && dayDiff > 7) {
+    return `This repeats daily but the first occurrence is ${formatDeadlineHuman(deadlineLocal)}. Every day after that it'll reset. Is that right?`;
+  }
+  return null;
+}
+
 const INPUT =
   "rounded-lg border border-border bg-bg px-3 py-2 text-sm outline-none transition-colors focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
@@ -63,6 +91,7 @@ export default function ReminderComposer({ onCreated }: Props) {
   const [cDeadlineLocal, setCDeadlineLocal] = useState(""); // datetime-local; "" = none inferred
   const [cStakes, setCStakes] = useState<ReminderStakes>("medium");
   const [showAdjust, setShowAdjust] = useState(false);
+  const [dismissedWarning, setDismissedWarning] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +110,7 @@ export default function ReminderComposer({ onCreated }: Props) {
     setCDeadlineLocal("");
     setCStakes("medium");
     setShowAdjust(false);
+    setDismissedWarning(null);
     setError(null);
     setStage("capture");
   }
@@ -143,10 +173,8 @@ export default function ReminderComposer({ onCreated }: Props) {
   }
 
   if (stage === "confirm") {
-    const repeatLabel =
-      recurrence !== "none"
-        ? RECURRENCE_OPTIONS.find((o) => o.value === recurrence)?.label
-        : null;
+    const warning = recurrenceWarning(cDeadlineLocal, recurrence);
+    const showWarning = warning !== null && warning !== dismissedWarning;
 
     return (
       <form
@@ -211,7 +239,43 @@ export default function ReminderComposer({ onCreated }: Props) {
           </div>
         </div>
 
-        {repeatLabel && <p className="text-xs text-muted">Repeats {repeatLabel.toLowerCase()}.</p>}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-muted">Repeat</span>
+          <select
+            value={recurrence}
+            onChange={(e) => setRecurrence(e.target.value as RecurrenceChoice)}
+            aria-label="Recurrence"
+            className={`w-fit ${INPUT}`}
+          >
+            {RECURRENCE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {showWarning && (
+          <div className="flex flex-col gap-1.5 rounded-lg border border-due-soon/30 bg-due-soon/5 px-3 py-2">
+            <p className="text-xs text-due-soon">{warning}</p>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setDismissedWarning(warning)}
+                className="text-xs text-muted transition-colors hover:text-text"
+              >
+                Yes, keep it
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecurrence("none")}
+                className="text-xs text-muted transition-colors hover:text-text"
+              >
+                Change to one-off
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <button
