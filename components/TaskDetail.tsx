@@ -7,6 +7,7 @@ import {
   formatRelativeDeadline,
   formatDayHeading,
   formatTimeRange,
+  formatEffort,
   isoToDatetimeLocal,
 } from "@/lib/format";
 import { useVoiceInput } from "@/components/useVoiceInput";
@@ -195,8 +196,8 @@ export default function TaskDetail({
         {/* Subtasks */}
         {task.subtasks.length > 0 && (
           <section className="mt-6">
-            <h3 className="text-sm font-medium uppercase tracking-wide text-muted">The work</h3>
-            <ul className="mt-3 flex flex-col gap-1">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">The work</h3>
+            <ul className="stagger mt-4 flex flex-col gap-1">
               {task.subtasks.map((s) => {
                 const done = s.status === "done";
                 const pending = pendingId === s.id;
@@ -208,10 +209,10 @@ export default function TaskDetail({
                       e.stopPropagation();
                       setEditRevealId(s.id);
                     }}
-                    className="group flex items-center gap-1 rounded-lg pr-1.5 transition-colors hover:bg-bg"
+                    className="group flex items-center gap-1 rounded-lg pr-1.5 transition-colors hover:bg-accent/5"
                   >
                     {renaming ? (
-                      <div className="flex flex-1 items-center gap-3 px-1.5 py-1.5">
+                      <div className="flex flex-1 items-center gap-3 px-1.5 py-2">
                         <SubtaskCircle done={done} />
                         <input
                           autoFocus
@@ -243,12 +244,17 @@ export default function TaskDetail({
                           }}
                           aria-pressed={done}
                           aria-label={done ? `Mark "${s.title}" not done` : `Mark "${s.title}" done`}
-                          className="flex flex-1 items-center gap-3 rounded-lg px-1.5 py-1.5 text-left transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                          className="flex flex-1 items-center gap-3 rounded-lg px-1.5 py-2 text-left transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
                         >
                           <SubtaskCircle done={done} />
-                          <span className={`strike ${done ? "strike-done text-muted" : "text-text"}`}>
+                          <span className={`strike font-medium ${done ? "strike-done text-muted" : "text-text"}`}>
                             {s.title}
                           </span>
+                          {s.effort_minutes ? (
+                            <span className="ml-auto shrink-0 text-xs tabular-nums text-muted">
+                              {formatEffort(s.effort_minutes)}
+                            </span>
+                          ) : null}
                         </button>
                         <button
                           type="button"
@@ -273,8 +279,8 @@ export default function TaskDetail({
         {/* Scheduled blocks */}
         {task.blocks.length > 0 && (
           <section className="mt-6">
-            <h3 className="text-sm font-medium uppercase tracking-wide text-muted">Scheduled</h3>
-            <ul className="mt-3 flex flex-col gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Scheduled</h3>
+            <ul className="stagger mt-4 flex flex-col gap-2">
               {task.blocks.map((b) => {
                 const editing = editingBlockId === b.id;
                 return (
@@ -284,7 +290,7 @@ export default function TaskDetail({
                       e.stopPropagation();
                       setEditRevealId(b.id);
                     }}
-                    className="group rounded-xl border border-border px-4 py-2.5"
+                    className="group rounded-xl border border-border px-4 py-2.5 transition-colors hover:border-accent/30"
                   >
                     {editing ? (
                       <div className="flex flex-col gap-2">
@@ -332,7 +338,8 @@ export default function TaskDetail({
                     ) : (
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="text-sm">
-                          {formatDayHeading(b.start)} · {formatTimeRange(b.start, b.end)}
+                          <span className="font-medium text-text">{formatDayHeading(b.start)}</span>
+                          <span className="text-muted"> · {formatTimeRange(b.start, b.end)}</span>
                         </span>
                         <div className="flex shrink-0 items-baseline gap-3">
                           <button
@@ -368,7 +375,7 @@ export default function TaskDetail({
         {/* Email drafts */}
         {task.drafts.length > 0 && (
           <section className="mt-6">
-            <h3 className="text-sm font-medium uppercase tracking-wide text-muted">Messages</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Messages</h3>
             <div className="mt-3 flex flex-col gap-3">
               {task.drafts.map((d) => (
                 <EmailDraftCard key={d.id} draft={d} />
@@ -380,7 +387,7 @@ export default function TaskDetail({
         {/* Adjust the plan in plain language — routes through the Layer 3 replan (§4) */}
         {incompleteCount > 0 && (
           <section className="mt-6">
-            <h3 className="text-sm font-medium uppercase tracking-wide text-muted">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">
               Tell Cadence to adjust this
             </h3>
             <div className="mt-3 flex items-center gap-2">
@@ -453,7 +460,7 @@ function SubtaskCircle({ done }: { done: boolean }) {
     <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
       <span
         className={`flex h-4 w-4 items-center justify-center rounded-full border transition-colors ${
-          done ? "border-accent bg-accent text-white" : "border-border"
+          done ? "border-accent bg-accent text-white" : "border-border group-hover:border-accent/40"
         }`}
       >
         <CheckIcon done={done} />
