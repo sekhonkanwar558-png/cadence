@@ -47,17 +47,22 @@ const CAPABILITIES = [
   {
     Icon: PencilIcon,
     title: "Tell it what's due",
-    body: "Type a task in plain language. Cadence breaks it into steps, finds time in your calendar, and schedules the work automatically.",
+    body: "Type or speak a task or reminder in plain language. Cadence breaks tasks into steps, schedules focus time, and sets pure deadline reminders — no planning needed.",
   },
   {
     Icon: EyeIcon,
     title: "It watches while you work",
-    body: "An autonomous monitor checks your deadlines in the background and emails you when something needs urgent attention — no app open required.",
+    body: "An autonomous monitor checks your deadlines and reminders in the background and emails you when something needs urgent attention — no app open required.",
   },
   {
     Icon: MessagesIcon,
     title: "Change plans by talking",
-    body: "Tell Cadence what changed (“move everything to tomorrow”, “I finished the outline”) and it reshapes your schedule and updates your calendar.",
+    body: "Tell Cadence what changed and it reshapes your schedule and updates your calendar. Or promote a reminder into a full plan with one tap.",
+  },
+  {
+    Icon: BellIcon,
+    title: "Reminders that escalate",
+    body: "Set a pure deadline — no subtasks, no calendar blocks. Cadence watches it and grows more urgent as the deadline nears, emailing you autonomously when it matters most.",
   },
 ];
 
@@ -444,6 +449,10 @@ export default function Home() {
                     Ask Cadence to adjust your plan in plain language anytime.
                   </li>
                   <li className="text-sm leading-snug text-muted">
+                    Set a pure deadline reminder when you just need a nudge — Cadence escalates it on
+                    its own as the deadline nears, no plan required.
+                  </li>
+                  <li className="text-sm leading-snug text-muted">
                     “Check my deadlines” sends you autonomous email nudges when time is running short.
                   </li>
                 </ul>
@@ -565,6 +574,15 @@ function MessagesIcon() {
     <CapIcon>
       <path d="M21 14l-3 -3h-7a1 1 0 0 1 -1 -1v-6a1 1 0 0 1 1 -1h9a1 1 0 0 1 1 1v10" />
       <path d="M14 15v2a1 1 0 0 1 -1 1h-7l-3 3v-10a1 1 0 0 1 1 -1h2" />
+    </CapIcon>
+  );
+}
+
+function BellIcon() {
+  return (
+    <CapIcon>
+      <path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 1 7h-6a7 7 0 0 1 1-7" />
+      <path d="M9 17v1a3 3 0 0 0 6 0v-1" />
     </CapIcon>
   );
 }
