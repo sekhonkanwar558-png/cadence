@@ -63,6 +63,9 @@ export default function TaskDetail({
   const [blockEnd, setBlockEnd] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Touch devices have no hover — tapping a row reveals that row's edit affordance.
+  // Tapping elsewhere in the dialog (or acting on a row) clears it back to hidden.
+  const [editRevealId, setEditRevealId] = useState<string | null>(null);
 
   function startRename(id: string, title: string) {
     setEditError(null);
@@ -174,6 +177,7 @@ export default function TaskDetail({
         aria-modal="true"
         className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6"
         onClick={(e) => e.stopPropagation()}
+        onTouchStart={() => setEditRevealId(null)}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
@@ -200,6 +204,10 @@ export default function TaskDetail({
                 return (
                   <li
                     key={s.id}
+                    onTouchStart={(e) => {
+                      e.stopPropagation();
+                      setEditRevealId(s.id);
+                    }}
                     className="group flex items-center gap-1 rounded-lg pr-1.5 transition-colors hover:bg-bg"
                   >
                     {renaming ? (
@@ -229,7 +237,10 @@ export default function TaskDetail({
                         <button
                           type="button"
                           disabled={pending}
-                          onClick={() => toggle(s.id, !done)}
+                          onClick={() => {
+                            setEditRevealId(null);
+                            toggle(s.id, !done);
+                          }}
                           aria-pressed={done}
                           aria-label={done ? `Mark "${s.title}" not done` : `Mark "${s.title}" done`}
                           className="flex flex-1 items-center gap-3 rounded-lg px-1.5 py-1.5 text-left transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
@@ -243,7 +254,9 @@ export default function TaskDetail({
                           type="button"
                           onClick={() => startRename(s.id, s.title)}
                           aria-label={`Rename "${s.title}"`}
-                          className="shrink-0 rounded-md p-1 text-muted opacity-0 transition-opacity hover:text-text focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 group-hover:opacity-100"
+                          className={`shrink-0 rounded-md p-1 text-muted transition-opacity hover:text-text focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 group-hover:opacity-100 ${
+                            editRevealId === s.id ? "opacity-100" : "opacity-0"
+                          }`}
                         >
                           <PencilIcon />
                         </button>
@@ -267,6 +280,10 @@ export default function TaskDetail({
                 return (
                   <li
                     key={b.id}
+                    onTouchStart={(e) => {
+                      e.stopPropagation();
+                      setEditRevealId(b.id);
+                    }}
                     className="group rounded-xl border border-border px-4 py-2.5"
                   >
                     {editing ? (
@@ -321,7 +338,9 @@ export default function TaskDetail({
                           <button
                             type="button"
                             onClick={() => startRetime(b.id, b.start, b.end)}
-                            className="text-sm text-muted opacity-0 transition-opacity hover:text-text focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 group-hover:opacity-100"
+                            className={`text-sm text-muted transition-opacity hover:text-text focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 group-hover:opacity-100 ${
+                              editRevealId === b.id ? "opacity-100" : "opacity-0"
+                            }`}
                           >
                             Edit time
                           </button>
@@ -330,6 +349,7 @@ export default function TaskDetail({
                               href={b.event_link}
                               target="_blank"
                               rel="noreferrer"
+                              onClick={() => setEditRevealId(null)}
                               className="text-sm text-accent hover:underline"
                             >
                               Open ↗
